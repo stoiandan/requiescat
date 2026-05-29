@@ -2,8 +2,6 @@ use iced::event::Event::Mouse;
 use iced::mouse;
 use iced::{Subscription, event};
 
-use crate::models::Grave;
-
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
     LeftPressed,
@@ -16,15 +14,9 @@ pub struct State {
     is_left_pressed: bool,
     pressed_at: Option<(f32, f32)>,
     released_at: Option<(f32, f32)>,
-    position: (f32, f32),
-    graves: Vec<Grave>,
+    position: (f32, f32)
 }
 
-fn create_rectangle((x1, y1): (f32, f32), (x2, y2): (f32, f32)) -> Grave {
-    let width = (x2 - x1).abs() as i32;
-    let height = (y2 - y1).abs() as i32;
-    Grave::new(x1.min(x2), y1.min(y2), width, height)
-}
 
 pub fn update(state: &mut State, message: Message) {
     match message {
@@ -44,8 +36,6 @@ pub fn update(state: &mut State, message: Message) {
                 "Left button released at: ({}, {})",
                 state.position.0, state.position.1
             );
-            let grave = create_rectangle(state.pressed_at.unwrap(), state.position);
-            state.graves.push(grave);
         }
         Message::Moved { x, y } => {
             state.position = (x, y);
