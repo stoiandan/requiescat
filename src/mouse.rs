@@ -14,9 +14,8 @@ pub struct State {
     is_left_pressed: bool,
     pressed_at: Option<(f32, f32)>,
     released_at: Option<(f32, f32)>,
-    position: (f32, f32)
+    position: (f32, f32),
 }
-
 
 pub fn update(state: &mut State, message: Message) {
     match message {
