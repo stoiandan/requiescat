@@ -4,20 +4,16 @@ use std::num;
 #[derive(Debug, Clone, Copy)]
 pub struct Coordinate {
     pub p1: Point,
-    pub p2: Point
+    pub p2: Point,
 }
-
 
 impl Coordinate {
     pub fn new(p1: Point, p2: Point) -> Self {
-        Self { 
-            p1,
-            p2
-        }
+        Self { p1, p2 }
     }
 
     pub fn height(&self) -> f32 {
-       (self.p1.y - self.p2.y).abs()
+        (self.p1.y - self.p2.y).abs()
     }
 
     pub fn width(&self) -> f32 {

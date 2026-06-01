@@ -1,3 +1,3 @@
-mod map_editor;
+mod map;
 
-pub use map_editor::MapEditor;
+pub use map::map_editor::MapEditor;
