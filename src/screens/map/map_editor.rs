@@ -1,20 +1,27 @@
 use super::Camera;
 use super::is_worth_drawing;
+use super::ToolbarAction;
+use iced::widget::Button;
+use iced::widget::{row, column};
 use iced::widget::{Action, canvas, container};
 use iced::{Element, Point, Renderer, Theme};
 
 use crate::models::Grave;
+use crate::screens::map::toolbar;
 pub struct MapEditor {
     graves: Vec<Grave>,
+    toolbar_action: ToolbarAction,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Message {
     GraveCreated(Grave),
+    ToolbarAction(ToolbarAction),
 }
 
 impl Default for MapEditor {
     fn default() -> Self {
-        Self { graves: vec![] }
+        Self { graves: vec![], toolbar_action: ToolbarAction::Draw}
     }
 }
 
@@ -22,14 +29,27 @@ impl MapEditor {
     pub fn update(&mut self, message: Message) {
         match message {
             Message::GraveCreated(grave) => self.graves.push(grave),
+            Message::ToolbarAction(action) => {
+                self.toolbar_action = action;
+            }
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        let toolbar = row![
+            Button::new("Draw")
+                .on_press(Message::ToolbarAction(ToolbarAction::Draw)),
+            Button::new("Grab")
+                .on_press(Message::ToolbarAction(ToolbarAction::Grab))
+        ];
+
         container(
-            canvas(self)
-                .width(iced::Length::Fill)
-                .height(iced::Length::Fill),
+            column![
+                canvas(self)
+                .height(iced::Length::Fill)
+                .width(iced::Length::Fill),
+                toolbar
+            ]
         )
         .style(|_| container::Style {
             border: iced::Border {
