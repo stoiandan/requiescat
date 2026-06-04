@@ -1,11 +1,12 @@
 use super::Camera;
-use super::is_worth_drawing;
+use super::{is_worth_drawing, find_grave_at};
 use super::{ToolBar, ToolbarAction};
 use iced::widget::{Action, canvas, container};
-use iced::widget::{column, row};
+use iced::widget::{column};
 use iced::{Element, Point, Renderer, Theme};
 
 use crate::models::Grave;
+use crate::screens::map::map_editor::Message::EraseAt;
 pub struct MapEditor {
     graves: Vec<Grave>,
     toolbar: ToolBar,
@@ -15,6 +16,7 @@ pub struct MapEditor {
 pub enum Message {
     GraveCreated(Grave),
     ToolBarAction(ToolbarAction),
+    EraseAt(iced::Point)
 }
 
 impl Default for MapEditor {
@@ -31,6 +33,12 @@ impl MapEditor {
         match message {
             Message::GraveCreated(grave) => self.graves.push(grave),
             Message::ToolBarAction(action) => self.toolbar.update(action),
+            Message::EraseAt(point) => {
+                let grave_to_remove_idx = find_grave_at(&self.graves, point);
+                if let Some(idx) = grave_to_remove_idx {
+                    self.graves.remove(idx);
+                }
+            }
         }
     }
 
@@ -178,7 +186,11 @@ impl canvas::Program<Message> for MapEditor {
                     ToolbarAction::Grab => {
                         _state.grab_started_at = None;
                     }
-                    ToolbarAction::ToggleGrid => {}
+                    ToolbarAction::Erase => {
+                        let to_world = _state.camera.screen_to_world(cursor);
+                        return Some(Action::publish(EraseAt(to_world)))
+                    }
+                    _  => {}
                 }
 
                 None
@@ -206,7 +218,7 @@ impl canvas::Program<Message> for MapEditor {
                             return Some(Action::request_redraw());
                         }
                     }
-                    ToolbarAction::ToggleGrid => {}
+                    _ => {}
                 }
 
                 None
@@ -243,13 +255,14 @@ impl canvas::Program<Message> for MapEditor {
                     iced::mouse::Interaction::Grab
                 }
             }
-            ToolbarAction::ToggleGrid => iced::mouse::Interaction::Idle,
+            ToolbarAction::Erase => iced::mouse::Interaction::NoDrop,
+            _ => iced::mouse::Interaction::Idle,
         }
     }
 }
 
 fn draw_grid(frame: &mut canvas::Frame, camera: &Camera, bounds: iced::Rectangle) {
-    const SQAUARE_SIZE: f32 = 50.0;
+    const SQUARE_SIZE: f32 = 50.0;
     const LABEL_INTERVAL: i32 = 2;
 
     let top_left = camera.screen_to_world(Point::ORIGIN);
@@ -258,13 +271,13 @@ fn draw_grid(frame: &mut canvas::Frame, camera: &Camera, bounds: iced::Rectangle
     let axis_color = iced::Color::from_rgba(0.65, 0.90, 0.88, 0.55);
     let label_color = iced::Color::from_rgba(0.75, 0.90, 0.88, 0.75);
 
-    let start_x = (top_left.x / SQAUARE_SIZE).floor() as i32;
-    let end_x = (bottom_right.x / SQAUARE_SIZE).ceil() as i32;
-    let start_y = (top_left.y / SQAUARE_SIZE).floor() as i32;
-    let end_y = (bottom_right.y / SQAUARE_SIZE).ceil() as i32;
+    let start_x = (top_left.x / SQUARE_SIZE).floor() as i32;
+    let end_x = (bottom_right.x / SQUARE_SIZE).ceil() as i32;
+    let start_y = (top_left.y / SQUARE_SIZE).floor() as i32;
+    let end_y = (bottom_right.y / SQUARE_SIZE).ceil() as i32;
 
     for index in start_x..=end_x {
-        let world_x = index as f32 * SQAUARE_SIZE;
+        let world_x = index as f32 * SQUARE_SIZE;
         let screen_x = camera.world_to_screen(Point::new(world_x, 0.0)).x;
         let path = canvas::Path::line(
             Point::new(screen_x, 0.0),
@@ -290,7 +303,7 @@ fn draw_grid(frame: &mut canvas::Frame, camera: &Camera, bounds: iced::Rectangle
     }
 
     for index in start_y..=end_y {
-        let world_y = index as f32 * SQAUARE_SIZE;
+        let world_y = index as f32 * SQUARE_SIZE;
         let screen_y = camera.world_to_screen(Point::new(0.0, world_y)).y;
         let path = canvas::Path::line(
             Point::new(0.0, screen_y),

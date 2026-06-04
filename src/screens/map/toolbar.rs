@@ -1,12 +1,13 @@
 use iced::widget::{button, container, row, text};
 use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ToolbarAction {
     Draw,
     StampGrave,
     Grab,
     ToggleGrid,
+    Erase
 }
 
 pub(super) struct ToolBar {
@@ -42,6 +43,7 @@ impl ToolBar {
                 self.selected_action == ToolbarAction::Grab,
             ),
             tool_button("#", ToolbarAction::ToggleGrid, self.show_grid),
+            tool_button("❌", ToolbarAction::Erase, self.selected_action == ToolbarAction::Erase)
         ]
         .spacing(8);
 
