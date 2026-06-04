@@ -27,5 +27,5 @@ impl Camera {
             (screen.x / self.zoom) + self.offset.x,
             (screen.y / self.zoom) + self.offset.y,
         )
-    }    
+    }
 }

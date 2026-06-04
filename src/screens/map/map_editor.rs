@@ -1,27 +1,28 @@
 use super::Camera;
+use super::{ToolbarAction, ToolBar};
 use super::is_worth_drawing;
-use super::ToolbarAction;
-use iced::widget::Button;
-use iced::widget::{row, column};
 use iced::widget::{Action, canvas, container};
+use iced::widget::{column, row};
 use iced::{Element, Point, Renderer, Theme};
 
 use crate::models::Grave;
-use crate::screens::map::toolbar;
 pub struct MapEditor {
     graves: Vec<Grave>,
-    toolbar_action: ToolbarAction,
+    toolbar: ToolBar,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
     GraveCreated(Grave),
-    ToolbarAction(ToolbarAction),
+    ToolBarAction(ToolbarAction)
 }
 
 impl Default for MapEditor {
     fn default() -> Self {
-        Self { graves: vec![], toolbar_action: ToolbarAction::Draw}
+        Self {
+            graves: vec![],
+            toolbar: ToolBar::default(),
+        }
     }
 }
 
@@ -29,28 +30,17 @@ impl MapEditor {
     pub fn update(&mut self, message: Message) {
         match message {
             Message::GraveCreated(grave) => self.graves.push(grave),
-            Message::ToolbarAction(action) => {
-                self.toolbar_action = action;
-            }
+            Message::ToolBarAction(action) => self.toolbar.update(action),
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let toolbar = row![
-            Button::new("Draw")
-                .on_press(Message::ToolbarAction(ToolbarAction::Draw)),
-            Button::new("Grab")
-                .on_press(Message::ToolbarAction(ToolbarAction::Grab))
-        ];
-
-        container(
-            column![
-                canvas(self)
+        container(column![
+            canvas(self)
                 .height(iced::Length::Fill)
                 .width(iced::Length::Fill),
-                toolbar
-            ]
-        )
+            self.toolbar.view().map(Message::ToolBarAction)
+        ])
         .style(|_| container::Style {
             border: iced::Border {
                 color: iced::Color::WHITE,
@@ -67,6 +57,7 @@ impl MapEditor {
 pub struct CanvasState {
     left_pressed_at: Option<Point>,
     current_drag_position: Option<Point>,
+    grab_started_at: Option<Point>,
     camera: Camera,
 }
 
@@ -144,29 +135,64 @@ impl canvas::Program<Message> for MapEditor {
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
                 let cursor = _cursor.position_in(_bounds)?;
 
-                let current_position_to_world = _state.camera.screen_to_world(cursor);
-                _state.left_pressed_at = Some(current_position_to_world);
+                match self.toolbar.selected_action {
+                    ToolbarAction::Draw => {
+                        let current_position_to_world = _state.camera.screen_to_world(cursor);
+                        _state.left_pressed_at = Some(current_position_to_world);
+                    }
+                    ToolbarAction::Grab => {
+                        _state.grab_started_at = Some(cursor);
+                    }
+                }
+
                 None
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
-                _state.current_drag_position = None;
                 let cursor = _cursor.position_in(_bounds)?;
 
-                let p1 = _state.left_pressed_at.take()?;
-                let p2 = _state.camera.screen_to_world(cursor);
+                match self.toolbar.selected_action {
+                    ToolbarAction::Draw => {
+                        _state.current_drag_position = None;
 
-                if is_worth_drawing(p1, p2) {
-                    let m = Message::GraveCreated((p1, p2).into());
-                    return Some(Action::publish(m));
+                        let p1 = _state.left_pressed_at.take()?;
+                        let p2 = _state.camera.screen_to_world(cursor);
+
+                        if is_worth_drawing(p1, p2) {
+                            let m = Message::GraveCreated((p1, p2).into());
+                            return Some(Action::publish(m));
+                        }
+                    }
+                    ToolbarAction::Grab => {
+                        _state.grab_started_at = None;
+                    }
                 }
+
                 None
             }
-            iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
-                if let Some(starting_point) = _state.left_pressed_at {
-                    let current_position_to_world = _state.camera.screen_to_world(*position);
-                    _state.current_drag_position = Some(current_position_to_world);
-                    return Some(Action::request_redraw());
+            iced::Event::Mouse(iced::mouse::Event::CursorMoved { position: _ }) => {
+                let cursor = _cursor.position_in(_bounds)?;
+
+                match self.toolbar.selected_action {
+                    ToolbarAction::Draw => {
+                        if _state.left_pressed_at.is_some() {
+                            let current_position_to_world = _state.camera.screen_to_world(cursor);
+                            _state.current_drag_position = Some(current_position_to_world);
+                            return Some(Action::request_redraw());
+                        }
+                    }
+                    ToolbarAction::Grab => {
+                        if let Some(previous_cursor) = _state.grab_started_at {
+                            let delta = cursor - previous_cursor;
+
+                            _state.camera.offset.x -= delta.x / _state.camera.zoom;
+                            _state.camera.offset.y -= delta.y / _state.camera.zoom;
+                            _state.grab_started_at = Some(cursor);
+
+                            return Some(Action::request_redraw());
+                        }
+                    }
                 }
+
                 None
             }
             iced::Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) => {
@@ -183,6 +209,24 @@ impl canvas::Program<Message> for MapEditor {
                 return Some(Action::request_redraw());
             }
             _ => None,
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &Self::State,
+        _bounds: iced::Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> iced::mouse::Interaction {
+        match self.toolbar.selected_action {
+            ToolbarAction::Draw => iced::mouse::Interaction::Crosshair,
+            ToolbarAction::Grab => {
+                if state.grab_started_at.is_some() {
+                    iced::mouse::Interaction::Grabbing
+                } else {
+                    iced::mouse::Interaction::Grab
+                }
+            }
         }
     }
 }
