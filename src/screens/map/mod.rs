@@ -3,8 +3,8 @@ pub mod map_editor;
 mod toolbar;
 
 use camera::Camera;
-use toolbar::ToolbarAction;
 use toolbar::ToolBar;
+use toolbar::ToolbarAction;
 
 fn is_worth_drawing(staring_point: iced::Point, ending_point: iced::Point) -> bool {
     (staring_point.x - ending_point.x).abs() >= 5.0

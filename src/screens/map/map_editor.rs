@@ -1,6 +1,6 @@
 use super::Camera;
-use super::{ToolbarAction, ToolBar};
 use super::is_worth_drawing;
+use super::{ToolBar, ToolbarAction};
 use iced::widget::{Action, canvas, container};
 use iced::widget::{column, row};
 use iced::{Element, Point, Renderer, Theme};
@@ -14,7 +14,7 @@ pub struct MapEditor {
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
     GraveCreated(Grave),
-    ToolBarAction(ToolbarAction)
+    ToolBarAction(ToolbarAction),
 }
 
 impl Default for MapEditor {
@@ -74,6 +74,10 @@ impl canvas::Program<Message> for MapEditor {
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let zoom = _state.camera.zoom;
+
+        if self.toolbar.show_grid {
+            draw_grid(&mut frame, &_state.camera, bounds);
+        }
 
         if let Some(current_drag) = _state.current_drag_position {
             let ghost_grave: Grave =
@@ -143,6 +147,7 @@ impl canvas::Program<Message> for MapEditor {
                     ToolbarAction::Grab => {
                         _state.grab_started_at = Some(cursor);
                     }
+                    _ => {}
                 }
 
                 None
@@ -162,9 +167,18 @@ impl canvas::Program<Message> for MapEditor {
                             return Some(Action::publish(m));
                         }
                     }
+                    ToolbarAction::StampGrave => {
+                        let top_left = _state.camera.screen_to_world(cursor);
+                        let bottom_right = Point::new(top_left.x + 10.0, top_left.y + 30.0);
+
+                        return Some(Action::publish(Message::GraveCreated(
+                            (top_left, bottom_right).into(),
+                        )));
+                    }
                     ToolbarAction::Grab => {
                         _state.grab_started_at = None;
                     }
+                    ToolbarAction::ToggleGrid => {}
                 }
 
                 None
@@ -180,6 +194,7 @@ impl canvas::Program<Message> for MapEditor {
                             return Some(Action::request_redraw());
                         }
                     }
+                    ToolbarAction::StampGrave => {}
                     ToolbarAction::Grab => {
                         if let Some(previous_cursor) = _state.grab_started_at {
                             let delta = cursor - previous_cursor;
@@ -191,6 +206,7 @@ impl canvas::Program<Message> for MapEditor {
                             return Some(Action::request_redraw());
                         }
                     }
+                    ToolbarAction::ToggleGrid => {}
                 }
 
                 None
@@ -219,7 +235,7 @@ impl canvas::Program<Message> for MapEditor {
         _cursor: iced::mouse::Cursor,
     ) -> iced::mouse::Interaction {
         match self.toolbar.selected_action {
-            ToolbarAction::Draw => iced::mouse::Interaction::Crosshair,
+            ToolbarAction::Draw | ToolbarAction::StampGrave => iced::mouse::Interaction::Crosshair,
             ToolbarAction::Grab => {
                 if state.grab_started_at.is_some() {
                     iced::mouse::Interaction::Grabbing
@@ -227,6 +243,75 @@ impl canvas::Program<Message> for MapEditor {
                     iced::mouse::Interaction::Grab
                 }
             }
+            ToolbarAction::ToggleGrid => iced::mouse::Interaction::Idle,
+        }
+    }
+}
+
+fn draw_grid(frame: &mut canvas::Frame, camera: &Camera, bounds: iced::Rectangle) {
+    const SQAUARE_SIZE: f32 = 50.0;
+    const LABEL_INTERVAL: i32 = 2;
+
+    let top_left = camera.screen_to_world(Point::ORIGIN);
+    let bottom_right = camera.screen_to_world(Point::new(bounds.width, bounds.height));
+    let line_color = iced::Color::from_rgba(0.55, 0.72, 0.72, 0.25);
+    let axis_color = iced::Color::from_rgba(0.65, 0.90, 0.88, 0.55);
+    let label_color = iced::Color::from_rgba(0.75, 0.90, 0.88, 0.75);
+
+    let start_x = (top_left.x / SQAUARE_SIZE).floor() as i32;
+    let end_x = (bottom_right.x / SQAUARE_SIZE).ceil() as i32;
+    let start_y = (top_left.y / SQAUARE_SIZE).floor() as i32;
+    let end_y = (bottom_right.y / SQAUARE_SIZE).ceil() as i32;
+
+    for index in start_x..=end_x {
+        let world_x = index as f32 * SQAUARE_SIZE;
+        let screen_x = camera.world_to_screen(Point::new(world_x, 0.0)).x;
+        let path = canvas::Path::line(
+            Point::new(screen_x, 0.0),
+            Point::new(screen_x, bounds.height),
+        );
+
+        frame.stroke(
+            &path,
+            canvas::Stroke::default()
+                .with_color(if index == 0 { axis_color } else { line_color })
+                .with_width(if index == 0 { 2.0 } else { 1.0 }),
+        );
+
+        if index % LABEL_INTERVAL == 0 {
+            frame.fill_text(canvas::Text {
+                content: format!("{world_x:.0}"),
+                position: Point::new(screen_x + 4.0, 4.0),
+                color: label_color,
+                size: iced::Pixels(11.0),
+                ..Default::default()
+            });
+        }
+    }
+
+    for index in start_y..=end_y {
+        let world_y = index as f32 * SQAUARE_SIZE;
+        let screen_y = camera.world_to_screen(Point::new(0.0, world_y)).y;
+        let path = canvas::Path::line(
+            Point::new(0.0, screen_y),
+            Point::new(bounds.width, screen_y),
+        );
+
+        frame.stroke(
+            &path,
+            canvas::Stroke::default()
+                .with_color(if index == 0 { axis_color } else { line_color })
+                .with_width(if index == 0 { 2.0 } else { 1.0 }),
+        );
+
+        if index % LABEL_INTERVAL == 0 {
+            frame.fill_text(canvas::Text {
+                content: format!("{world_y:.0}"),
+                position: Point::new(4.0, screen_y + 4.0),
+                color: label_color,
+                size: iced::Pixels(11.0),
+                ..Default::default()
+            });
         }
     }
 }
