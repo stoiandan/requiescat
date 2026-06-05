@@ -87,34 +87,8 @@ impl canvas::Program<Message> for MapEditor {
             draw_grid(&mut frame, &_state.camera, bounds);
         }
 
-        if let Some(current_drag) = _state.current_drag_position {
-            let ghost_grave: Grave =
-                (_state.left_pressed_at.unwrap_or(current_drag), current_drag).into();
-            let ghost_to_screen = _state.camera.world_to_screen(Point::new(
-                ghost_grave.coordinate.top_left_x(),
-                ghost_grave.coordinate.top_left_y(),
-            ));
-            let rect = iced::Rectangle {
-                x: ghost_to_screen.x,
-                y: ghost_to_screen.y,
-                width: ghost_grave.coordinate.width() * zoom,
-                height: ghost_grave.coordinate.height() * zoom,
-            };
-            let path = canvas::Path::rectangle(rect.position(), rect.size());
-
-            frame.stroke(
-                &path,
-                canvas::Stroke {
-                    width: 2.0,
-                    style: canvas::Style::Solid(iced::Color::WHITE),
-                    line_dash: canvas::LineDash {
-                        segments: &[6.0, 4.0],
-                        offset: 0,
-                    },
-                    ..Default::default()
-                },
-            );
-        }
+        draw_grave_preview(&mut frame, zoom, _state);
+        
         for grave in &self.graves {
             let grave_to_screen = _state.camera.world_to_screen(Point::new(
                 grave.coordinate.top_left_x(),
@@ -327,4 +301,36 @@ fn draw_grid(frame: &mut canvas::Frame, camera: &Camera, bounds: iced::Rectangle
             });
         }
     }
+}
+
+
+fn draw_grave_preview(frame: &mut canvas::Frame, zoom: f32, _state: &CanvasState) {
+            if let Some(current_drag) = _state.current_drag_position {
+            let ghost_grave: Grave =
+                (_state.left_pressed_at.unwrap_or(current_drag), current_drag).into();
+            let ghost_to_screen = _state.camera.world_to_screen(Point::new(
+                ghost_grave.coordinate.top_left_x(),
+                ghost_grave.coordinate.top_left_y(),
+            ));
+            let rect = iced::Rectangle {
+                x: ghost_to_screen.x,
+                y: ghost_to_screen.y,
+                width: ghost_grave.coordinate.width() * zoom,
+                height: ghost_grave.coordinate.height() * zoom,
+            };
+            let path = canvas::Path::rectangle(rect.position(), rect.size());
+
+            frame.stroke(
+                &path,
+                canvas::Stroke {
+                    width: 2.0,
+                    style: canvas::Style::Solid(iced::Color::WHITE),
+                    line_dash: canvas::LineDash {
+                        segments: &[6.0, 4.0],
+                        offset: 0,
+                    },
+                    ..Default::default()
+                },
+            );
+        }
 }
