@@ -2,48 +2,57 @@ use iced::widget::{button, container, row, text};
 use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ToolbarAction {
+pub enum Tool {
     Draw,
     StampGrave,
     Grab,
+    Erase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ToolbarAction {
+    SelectTool(Tool),
     ToggleGrid,
-    Erase
 }
 
-pub(super) struct ToolBar {
-    pub selected_action: ToolbarAction,
-    pub show_grid: bool,
+pub(super) struct Toolbar {
+    selected_tool: Tool,
+    show_grid: bool,
 }
 
-impl Default for ToolBar {
+impl Default for Toolbar {
     fn default() -> Self {
         Self {
-            selected_action: ToolbarAction::Draw,
+            selected_tool: Tool::Draw,
             show_grid: true,
         }
     }
 }
 
-impl ToolBar {
+impl Toolbar {
     pub fn view(&self) -> Element<'_, ToolbarAction> {
         let tools = row![
             tool_button(
                 "🖌",
-                ToolbarAction::Draw,
-                self.selected_action == ToolbarAction::Draw,
+                ToolbarAction::SelectTool(Tool::Draw),
+                self.selected_tool == Tool::Draw,
             ),
             tool_button(
                 "▯",
-                ToolbarAction::StampGrave,
-                self.selected_action == ToolbarAction::StampGrave,
+                ToolbarAction::SelectTool(Tool::StampGrave),
+                self.selected_tool == Tool::StampGrave,
             ),
             tool_button(
                 "✋",
-                ToolbarAction::Grab,
-                self.selected_action == ToolbarAction::Grab,
+                ToolbarAction::SelectTool(Tool::Grab),
+                self.selected_tool == Tool::Grab,
             ),
             tool_button("#", ToolbarAction::ToggleGrid, self.show_grid),
-            tool_button("❌", ToolbarAction::Erase, self.selected_action == ToolbarAction::Erase)
+            tool_button(
+                "❌",
+                ToolbarAction::SelectTool(Tool::Erase),
+                self.selected_tool == Tool::Erase
+            )
         ]
         .spacing(8);
 
@@ -74,8 +83,16 @@ impl ToolBar {
     pub fn update(&mut self, message: ToolbarAction) {
         match message {
             ToolbarAction::ToggleGrid => self.show_grid = !self.show_grid,
-            action => self.selected_action = action,
+            ToolbarAction::SelectTool(tool) => self.selected_tool = tool,
         }
+    }
+
+    pub fn selected_tool(&self) -> Tool {
+        self.selected_tool
+    }
+
+    pub fn show_grid(&self) -> bool {
+        self.show_grid
     }
 }
 

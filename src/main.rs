@@ -1,5 +1,4 @@
 mod models;
-mod mouse;
 mod screens;
 
 use iced;

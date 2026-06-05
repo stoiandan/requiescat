@@ -1,25 +1,44 @@
-use super::coordinate::Coordinate;
+use iced::{Point, Size, Vector};
+
+use super::grave_rectangle::GraveRectangle;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Grave {
-    pub coordinate: Coordinate,
+    rectangle: GraveRectangle,
 }
 
 impl Grave {
-    pub fn new(top_left: iced::Point, bottom_right: iced::Point) -> Self {
+    pub fn from_corners(a: Point, b: Point) -> Self {
         Self {
-            coordinate: Coordinate::new(top_left, bottom_right),
+            rectangle: GraveRectangle::from_corners(a, b),
         }
+    }
+
+    pub fn from_top_left_size(top_left: Point, size: Size) -> Self {
+        Self {
+            rectangle: GraveRectangle::from_top_left_size(top_left, size),
+        }
+    }
+
+    pub fn top_left(&self) -> Point {
+        self.rectangle.top_left()
+    }
+
+    pub fn size(&self) -> Size {
+        self.rectangle.size()
+    }
+
+    pub fn contains(&self, point: Point) -> bool {
+        self.rectangle.contains(point)
+    }
+
+    pub fn translate(&mut self, delta: Vector) {
+        self.rectangle.translate(delta);
     }
 }
 
-impl Into<Grave> for (iced::Point, iced::Point) {
+impl Into<Grave> for (Point, Point) {
     fn into(self) -> Grave {
-        Grave {
-            coordinate: Coordinate {
-                p1: self.0,
-                p2: self.1,
-            },
-        }
+        Grave::from_corners(self.0, self.1)
     }
 }
