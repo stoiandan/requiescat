@@ -1,6 +1,8 @@
 use iced::Vector;
 
-use super::{CemeteryMap, Grave, GraveId, GraveRectangle, Person, PersonDirectory, PersonId};
+use super::{
+    CemeteryMap, Grave, GraveId, GraveRectangle, Person, PersonDate, PersonDirectory, PersonId,
+};
 
 #[derive(Debug, Default)]
 pub struct Cemetery {
@@ -38,8 +40,8 @@ impl Cemetery {
         &mut self,
         first_name: String,
         last_name: String,
-        date_of_birth: String,
-        date_of_decease: String,
+        date_of_birth: PersonDate,
+        date_of_decease: Option<PersonDate>,
         grave_id: Option<GraveId>,
     ) -> PersonId {
         self.people.create_person_with_details(
@@ -97,8 +99,8 @@ mod tests {
         cemetery.create_person_with_details(
             "Ada".to_owned(),
             "Lovelace".to_owned(),
-            "1815".to_owned(),
-            String::new(),
+            PersonDate::parse("10-12-1815").unwrap(),
+            None,
             grave_id,
         )
     }

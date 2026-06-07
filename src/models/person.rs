@@ -1,12 +1,12 @@
-use super::{GraveId, PersonId};
+use super::{GraveId, PersonDate, PersonId};
 
 #[derive(Debug, Clone)]
 pub struct Person {
     id: PersonId,
     first_name: String,
     last_name: String,
-    date_of_birth: String,
-    date_of_decease: String,
+    date_of_birth: PersonDate,
+    date_of_decease: Option<PersonDate>,
     grave_id: Option<GraveId>,
 }
 
@@ -15,8 +15,8 @@ impl Person {
         id: PersonId,
         first_name: String,
         last_name: String,
-        date_of_birth: String,
-        date_of_decease: String,
+        date_of_birth: PersonDate,
+        date_of_decease: Option<PersonDate>,
         grave_id: Option<GraveId>,
     ) -> Self {
         Self {
@@ -42,11 +42,14 @@ impl Person {
     }
 
     pub fn date_of_birth(&self) -> &str {
-        &self.date_of_birth
+        self.date_of_birth.as_str()
     }
 
-    pub fn date_of_decease(&self) -> &str {
-        &self.date_of_decease
+    pub fn date_of_decease_text(&self) -> &str {
+        self.date_of_decease
+            .as_ref()
+            .map(PersonDate::as_str)
+            .unwrap_or_default()
     }
 
     pub fn grave_id(&self) -> Option<GraveId> {
@@ -61,11 +64,11 @@ impl Person {
         self.last_name = value;
     }
 
-    pub fn set_date_of_birth(&mut self, value: String) {
+    pub fn set_date_of_birth(&mut self, value: PersonDate) {
         self.date_of_birth = value;
     }
 
-    pub fn set_date_of_decease(&mut self, value: String) {
+    pub fn set_date_of_decease(&mut self, value: Option<PersonDate>) {
         self.date_of_decease = value;
     }
 
@@ -90,8 +93,8 @@ impl Person {
 
         self.first_name.to_lowercase().contains(&query)
             || self.last_name.to_lowercase().contains(&query)
-            || self.date_of_birth.to_lowercase().contains(&query)
-            || self.date_of_decease.to_lowercase().contains(&query)
+            || self.date_of_birth.as_str().to_lowercase().contains(&query)
+            || self.date_of_decease_text().to_lowercase().contains(&query)
     }
 }
 
@@ -105,8 +108,8 @@ mod tests {
             PersonId::new(1),
             " Ada ".to_owned(),
             " Lovelace ".to_owned(),
-            String::new(),
-            String::new(),
+            PersonDate::parse("10-12-1815").unwrap(),
+            None,
             None,
         );
 
@@ -119,15 +122,15 @@ mod tests {
             PersonId::new(1),
             "Ada".to_owned(),
             "Lovelace".to_owned(),
-            "1815".to_owned(),
-            "1852".to_owned(),
+            PersonDate::parse("10-12-1815").unwrap(),
+            Some(PersonDate::parse("27-11-1852").unwrap()),
             None,
         );
 
         assert!(person.matches_query(""));
         assert!(person.matches_query("lovelace"));
         assert!(person.matches_query("ADA"));
-        assert!(person.matches_query("1852"));
+        assert!(person.matches_query("27-11-1852"));
         assert!(!person.matches_query("hopper"));
     }
 
@@ -137,8 +140,8 @@ mod tests {
             PersonId::new(1),
             "Ada".to_owned(),
             "Lovelace".to_owned(),
-            "1815".to_owned(),
-            String::new(),
+            PersonDate::parse("10-12-1815").unwrap(),
+            None,
             None,
         );
         let grave_id = GraveId::new(7);

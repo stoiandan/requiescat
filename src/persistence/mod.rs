@@ -1,4 +1,4 @@
-use crate::models::{Cemetery, Grave, GraveId, GraveRectangle, Person, PersonId};
+use crate::models::{Cemetery, Grave, GraveId, GraveRectangle, Person, PersonDate, PersonId};
 use iced::{Point, Size};
 
 pub trait CemeteryRepository {
@@ -65,7 +65,7 @@ impl From<Person> for PersonRow {
             first_name: person.first_name().to_owned(),
             last_name: person.last_name().to_owned(),
             date_of_birth: person.date_of_birth().to_owned(),
-            date_of_decease: person.date_of_decease().to_owned(),
+            date_of_decease: person.date_of_decease_text().to_owned(),
             grave_id: person.grave_id().map(GraveId::value),
         }
     }
@@ -77,8 +77,16 @@ impl From<PersonRow> for Person {
             PersonId::new(row.id),
             row.first_name,
             row.last_name,
-            row.date_of_birth,
-            row.date_of_decease,
+            PersonDate::parse(&row.date_of_birth)
+                .expect("persisted person birth date should be a valid dd-mm-yyyy date"),
+            if row.date_of_decease.trim().is_empty() {
+                None
+            } else {
+                Some(
+                    PersonDate::parse(&row.date_of_decease)
+                        .expect("persisted person decease date should be a valid dd-mm-yyyy date"),
+                )
+            },
             row.grave_id.map(GraveId::new),
         )
     }

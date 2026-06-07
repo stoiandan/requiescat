@@ -88,12 +88,13 @@ impl Requiesta {
                     .retain(|(window_id, _)| *window_id != id);
             }
             Message::Keyboard(event) => {
-                if should_open_new_person(&event) {
+                if is_command_shortcut(&event, 'n') {
                     return self.open_new_person_dialog();
                 }
-            }
-            Message::Editor(MapEditorMessage::OpenPersonDirectory) => {
-                return self.open_person_directory();
+
+                if is_command_shortcut(&event, 'p') {
+                    return self.open_person_directory();
+                }
             }
             Message::Editor(MapEditorMessage::OpenPersonDetails(person_id)) => {
                 return self.open_person_details(person_id);
@@ -215,7 +216,7 @@ impl Requiesta {
     }
 }
 
-fn should_open_new_person(event: &keyboard::Event) -> bool {
+fn is_command_shortcut(event: &keyboard::Event, character: char) -> bool {
     let keyboard::Event::KeyPressed {
         key,
         physical_key,
@@ -227,5 +228,5 @@ fn should_open_new_person(event: &keyboard::Event) -> bool {
         return false;
     };
 
-    !repeat && modifiers.command() && key.to_latin(*physical_key) == Some('n')
+    !repeat && modifiers.command() && key.to_latin(*physical_key) == Some(character)
 }

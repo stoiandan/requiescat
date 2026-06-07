@@ -7,7 +7,7 @@ use iced::widget::{
 };
 use iced::{Element, Length, Point, Renderer, Theme};
 
-use crate::models::{Cemetery, GraveId, GraveRectangle, Person, PersonId};
+use crate::models::{Cemetery, GraveId, GraveRectangle, Person, PersonDate, PersonId};
 
 pub struct MapEditor {
     cemetery: Cemetery,
@@ -21,7 +21,6 @@ pub struct MapEditor {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    OpenPersonDirectory,
     OpenPersonDetails(PersonId),
     SubmitNewPerson,
     NewPersonFirstNameChanged(String),
@@ -62,7 +61,6 @@ impl Default for MapEditor {
 impl MapEditor {
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::OpenPersonDirectory => {}
             Message::OpenPersonDetails(_) => {}
             Message::SubmitNewPerson => {
                 self.submit_new_person();
@@ -134,15 +132,23 @@ impl MapEditor {
                 }
             }
             Message::UpdatePersonDateOfBirth(id, value) => {
-                if !value.trim().is_empty()
+                if let Ok(date) = PersonDate::parse(&value)
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
-                    person.set_date_of_birth(value);
+                    person.set_date_of_birth(date);
                 }
             }
             Message::UpdatePersonDateOfDecease(id, value) => {
-                if let Some(person) = self.cemetery.person_mut(id) {
-                    person.set_date_of_decease(value);
+                let date = if value.trim().is_empty() {
+                    Some(None)
+                } else {
+                    PersonDate::parse(&value).ok().map(Some)
+                };
+
+                if let Some(date) = date
+                    && let Some(person) = self.cemetery.person_mut(id)
+                {
+                    person.set_date_of_decease(date);
                 }
             }
         }
@@ -158,14 +164,9 @@ impl MapEditor {
 
         container(column![
             map_row.height(Length::Fill),
-            row![
-                self.toolbar.view().map(Message::ToolBarAction),
-                button(text("Persons"))
-                    .on_press(Message::OpenPersonDirectory)
-                    .height(44)
-            ]
-            .spacing(8)
-            .padding([8, 12])
+            row![self.toolbar.view().map(Message::ToolBarAction)]
+                .spacing(8)
+                .padding([8, 12])
         ])
         .style(|_| container::Style {
             border: iced::Border {
@@ -193,12 +194,9 @@ impl MapEditor {
 
     pub fn person_details_view(&self, person_id: PersonId) -> Element<'_, Message> {
         let content = if let Some(person) = self.cemetery.person(person_id) {
-            column![
-                text("Person").size(20),
-                self.person_editor(person, self.selected_grave())
-            ]
-            .spacing(12)
-            .padding(16)
+            column![text("Person").size(20), self.person_editor(person)]
+                .spacing(12)
+                .padding(16)
         } else {
             column![text("Person not found").size(20)].padding(16)
         };
@@ -239,12 +237,18 @@ impl MapEditor {
                 text_input("Last name", &self.new_person.last_name)
                     .on_input(Message::NewPersonLastNameChanged)
                     .padding(8),
-                text_input("Date of birth", &self.new_person.date_of_birth)
-                    .on_input(Message::NewPersonDateOfBirthChanged)
-                    .padding(8),
-                text_input("Date of decease", &self.new_person.date_of_decease)
-                    .on_input(Message::NewPersonDateOfDeceaseChanged)
-                    .padding(8),
+                text_input(
+                    "Date of birth, e.g. 30-04-1996",
+                    &self.new_person.date_of_birth
+                )
+                .on_input(Message::NewPersonDateOfBirthChanged)
+                .padding(8),
+                text_input(
+                    "Date of decease, e.g. 30-04-1996",
+                    &self.new_person.date_of_decease
+                )
+                .on_input(Message::NewPersonDateOfDeceaseChanged)
+                .padding(8),
                 submit
             ]
             .spacing(10)
@@ -280,9 +284,7 @@ impl MapEditor {
     }
 
     fn grave_details(&self, grave_id: GraveId) -> Element<'_, Message> {
-        let mut content = column![text("Grave").size(18)]
-            .spacing(8)
-            .push(text(format!("Selected grave {}", grave_id)));
+        let mut content = column![text(format!("Grave {}", grave_id)).size(18)].spacing(8);
 
         let people = self.cemetery.people_in_grave(grave_id);
 
@@ -292,7 +294,7 @@ impl MapEditor {
             }));
         } else {
             for person in people {
-                content = content.push(self.person_editor(person, Some(grave_id)));
+                content = content.push(self.person_editor(person));
             }
         }
 
@@ -317,8 +319,9 @@ impl MapEditor {
 
     fn person_result(&self, person: &Person) -> Element<'_, Message> {
         let id = person.id();
+        let selected_grave = self.selected_grave();
 
-        mouse_area(
+        let info = mouse_area(
             container(
                 column![
                     text(person.display_name()).size(16),
@@ -330,6 +333,36 @@ impl MapEditor {
                 ]
                 .spacing(2),
             )
+            .width(Length::Fill),
+        )
+        .on_double_click(Message::OpenPersonDetails(id));
+
+        let mut content = row![info].spacing(8);
+
+        if person.grave_id().is_some() {
+            content = content.push(button(text("Go to grave")).on_press(Message::SelectPerson(id)));
+        }
+
+        if selected_grave.is_some() {
+            let assign = button(text("Assign"));
+            let unassign = button(text("Unassign"));
+
+            let assign = if person.grave_id().is_none() {
+                assign.on_press(Message::AssignPersonToSelectedGrave(id))
+            } else {
+                assign
+            };
+
+            let unassign = if person.grave_id().is_some() {
+                unassign.on_press(Message::UnassignPersonFromGrave(id))
+            } else {
+                unassign
+            };
+
+            content = content.push(assign).push(unassign);
+        }
+
+        container(content)
             .width(Length::Fill)
             .padding([10, 12])
             .style(|_| container::Style {
@@ -340,37 +373,12 @@ impl MapEditor {
                     radius: 4.0.into(),
                 },
                 ..Default::default()
-            }),
-        )
-        .on_double_click(Message::OpenPersonDetails(id))
-        .into()
+            })
+            .into()
     }
 
-    fn person_editor(
-        &self,
-        person: &Person,
-        selected_grave: Option<GraveId>,
-    ) -> Element<'_, Message> {
+    fn person_editor(&self, person: &Person) -> Element<'_, Message> {
         let id = person.id();
-        let mut actions =
-            row![].spacing(8);
-
-        if person.grave_id().is_some() {
-            actions = actions.push(button(text("Go to grave")).on_press(Message::SelectPerson(id)));
-        }
-
-        if person.grave_id().is_some() {
-            actions = actions
-                .push(button(text("Unassign")).on_press(Message::UnassignPersonFromGrave(id)));
-        }
-
-        if let Some(grave_id) = selected_grave {
-            if person.grave_id() != Some(grave_id) {
-                actions = actions.push(
-                    button(text("Assign")).on_press(Message::AssignPersonToSelectedGrave(id)),
-                );
-            }
-        }
 
         let details = column![
             text(person.display_name()).size(16),
@@ -406,10 +414,9 @@ impl MapEditor {
                 text_input("Date of birth", person.date_of_birth())
                     .on_input(move |value| Message::UpdatePersonDateOfBirth(id, value))
                     .padding(7),
-                text_input("Date of decease", person.date_of_decease())
+                text_input("Date of decease", person.date_of_decease_text())
                     .on_input(move |value| Message::UpdatePersonDateOfDecease(id, value))
-                    .padding(7),
-                actions
+                    .padding(7)
             ]
             .spacing(6),
         )
@@ -458,8 +465,10 @@ impl MapEditor {
         let id = self.cemetery.create_person_with_details(
             self.new_person.first_name.trim().to_owned(),
             self.new_person.last_name.trim().to_owned(),
-            self.new_person.date_of_birth.trim().to_owned(),
-            self.new_person.date_of_decease.trim().to_owned(),
+            self.new_person
+                .date_of_birth()
+                .expect("new person should be valid before submit"),
+            self.new_person.date_of_decease(),
             self.new_person.grave_id,
         );
 
@@ -498,7 +507,20 @@ impl NewPersonDraft {
     fn is_valid(&self) -> bool {
         !self.first_name.trim().is_empty()
             && !self.last_name.trim().is_empty()
-            && !self.date_of_birth.trim().is_empty()
+            && self.date_of_birth().is_some()
+            && (self.date_of_decease.trim().is_empty() || self.date_of_decease().is_some())
+    }
+
+    fn date_of_birth(&self) -> Option<PersonDate> {
+        PersonDate::parse(&self.date_of_birth).ok()
+    }
+
+    fn date_of_decease(&self) -> Option<PersonDate> {
+        if self.date_of_decease.trim().is_empty() {
+            None
+        } else {
+            PersonDate::parse(&self.date_of_decease).ok()
+        }
     }
 }
 
@@ -560,7 +582,7 @@ impl canvas::Program<Message> for MapEditor {
         drawing::grave_preview(&mut frame, state, &self.camera);
         drawing::graves(
             &mut frame,
-            self.cemetery.graves(),
+            &self.cemetery,
             &self.camera,
             self.selected_grave,
         );

@@ -1,4 +1,4 @@
-use super::{GraveId, Person, PersonId};
+use super::{GraveId, Person, PersonDate, PersonId};
 
 #[derive(Debug, Default)]
 pub struct PersonDirectory {
@@ -11,8 +11,8 @@ impl PersonDirectory {
         &mut self,
         first_name: String,
         last_name: String,
-        date_of_birth: String,
-        date_of_decease: String,
+        date_of_birth: PersonDate,
+        date_of_decease: Option<PersonDate>,
         grave_id: Option<GraveId>,
     ) -> PersonId {
         let id = self.next_id();
@@ -87,8 +87,8 @@ mod tests {
         directory.create_person_with_details(
             "Ada".to_owned(),
             "Lovelace".to_owned(),
-            "1815".to_owned(),
-            String::new(),
+            PersonDate::parse("10-12-1815").unwrap(),
+            None,
             grave_id,
         )
     }

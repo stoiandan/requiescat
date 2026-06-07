@@ -3,7 +3,7 @@ use iced::{Point, Rectangle};
 
 use super::Camera;
 use super::map_editor::CanvasState;
-use crate::models::{Grave, GraveId, GraveRectangle};
+use crate::models::{Cemetery, GraveId, GraveRectangle};
 
 pub fn grid(frame: &mut canvas::Frame, camera: &Camera, bounds: Rectangle) {
     const SQUARE_SIZE: f32 = 50.0;
@@ -98,16 +98,23 @@ pub fn grave_preview(frame: &mut canvas::Frame, state: &CanvasState, camera: &Ca
 
 pub fn graves(
     frame: &mut canvas::Frame,
-    graves: &[Grave],
+    cemetery: &Cemetery,
     camera: &Camera,
     selected_grave: Option<GraveId>,
 ) {
-    for grave in graves {
+    for grave in cemetery.graves() {
         let rectangle = grave.rectangle();
         let top_left = camera.world_to_screen(rectangle.top_left());
         let size = rectangle.size() * camera.zoom;
 
         frame.fill_rectangle(top_left, size, iced::Color::from_rgb(0.65, 0.121, 0.157));
+        grave_labels(
+            frame,
+            grave.id(),
+            grave_label_rows(cemetery, grave.id()),
+            top_left,
+            size,
+        );
 
         if Some(grave.id()) == selected_grave {
             let path = canvas::Path::rectangle(top_left, size);
@@ -119,5 +126,150 @@ pub fn graves(
                     .with_width(3.0),
             );
         }
+    }
+}
+
+fn grave_labels(
+    frame: &mut canvas::Frame,
+    grave_id: GraveId,
+    rows: Vec<String>,
+    top_left: Point,
+    size: iced::Size,
+) {
+    const PADDING: f32 = 5.0;
+    const MIN_FONT_SIZE: f32 = 9.0;
+    const MAX_FONT_SIZE: f32 = 13.0;
+    const APPROX_WORLD_CHARACTER_WIDTH: f32 = 7.0;
+
+    let font_size = label_font_size(size.width);
+    let row_height = font_size * 1.25;
+    let max_rows = ((size.height - PADDING * 2.0) / row_height).floor() as usize;
+    if max_rows == 0 {
+        return;
+    }
+
+    let rows = visible_label_rows(rows, format!("grave {}", grave_id), max_rows);
+    let max_width = size.width - PADDING * 2.0;
+    let max_characters = (max_width / (font_size / 12.0 * APPROX_WORLD_CHARACTER_WIDTH))
+        .floor()
+        .max(0.0) as usize;
+
+    for (index, row) in rows.into_iter().enumerate() {
+        let row = truncate_label(&row, max_characters);
+        if row.is_empty() {
+            continue;
+        }
+
+        frame.fill_text(canvas::Text {
+            content: row,
+            position: Point::new(
+                top_left.x + size.width / 2.0,
+                top_left.y + PADDING + index as f32 * row_height + row_height / 2.0,
+            ),
+            max_width,
+            color: iced::Color::WHITE,
+            size: iced::Pixels(font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)),
+            align_x: iced::alignment::Horizontal::Center.into(),
+            align_y: iced::alignment::Vertical::Center,
+            ..Default::default()
+        });
+    }
+}
+
+fn label_font_size(screen_width: f32) -> f32 {
+    (screen_width / 8.5).clamp(9.0, 13.0)
+}
+
+fn grave_label_rows(cemetery: &Cemetery, grave_id: GraveId) -> Vec<String> {
+    cemetery
+        .people_in_grave(grave_id)
+        .into_iter()
+        .map(|person| person.display_name())
+        .collect()
+}
+
+fn visible_label_rows(rows: Vec<String>, fallback: String, max_rows: usize) -> Vec<String> {
+    if max_rows == 0 {
+        return Vec::new();
+    }
+
+    if rows.is_empty() {
+        return vec![fallback];
+    }
+
+    if rows.len() <= max_rows {
+        return rows;
+    }
+
+    if max_rows == 1 {
+        return vec!["...".to_owned()];
+    }
+
+    rows.into_iter()
+        .take(max_rows - 1)
+        .chain(std::iter::once("...".to_owned()))
+        .collect()
+}
+
+fn truncate_label(label: &str, max_characters: usize) -> String {
+    if label.chars().count() <= max_characters {
+        return label.to_owned();
+    }
+
+    if max_characters <= 3 {
+        return String::new();
+    }
+
+    let mut truncated = label.chars().take(max_characters - 3).collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn visible_label_rows_uses_fallback_when_grave_has_no_people() {
+        assert_eq!(
+            visible_label_rows(Vec::new(), "grave 1".to_owned(), 2),
+            rows(&["grave 1"])
+        );
+    }
+
+    #[test]
+    fn visible_label_rows_keeps_all_people_that_fit() {
+        assert_eq!(
+            visible_label_rows(rows(&["Dan Stoian", "Maria Boto"]), "grave 1".to_owned(), 2),
+            rows(&["Dan Stoian", "Maria Boto"])
+        );
+    }
+
+    #[test]
+    fn visible_label_rows_reserves_last_row_for_overflow_marker() {
+        assert_eq!(
+            visible_label_rows(
+                rows(&["Dan Stoian", "Maria Boto", "Ada Lovelace"]),
+                "grave 1".to_owned(),
+                2
+            ),
+            rows(&["Dan Stoian", "..."])
+        );
+    }
+
+    #[test]
+    fn label_font_size_is_clamped_to_avoid_zoom_jumps() {
+        assert_eq!(label_font_size(20.0), 9.0);
+        assert_eq!(label_font_size(500.0), 13.0);
+    }
+
+    #[test]
+    fn truncate_label_uses_character_capacity() {
+        assert_eq!(truncate_label("Dan Stoian", 20), "Dan Stoian");
+        assert_eq!(truncate_label("Dan Stoian", 6), "Dan...");
     }
 }
