@@ -34,9 +34,10 @@ pub fn handle_event(
                 iced::mouse::ScrollDelta::Pixels { y, .. } => *y as f32 * 0.001,
             };
 
-            state.camera.zoom_at(cursor, zoom_amount);
-
-            Some(Action::request_redraw())
+            Some(Action::publish(Message::ZoomCamera {
+                cursor,
+                amount: zoom_amount,
+            }))
         }
         _ => None,
     }
@@ -46,14 +47,14 @@ fn handle_left_press(editor: &MapEditor, state: &mut CanvasState, cursor: Point)
     match editor.selected_tool() {
         Tool::Select => {}
         Tool::Draw => {
-            let current_position_to_world = state.camera.screen_to_world(cursor);
+            let current_position_to_world = editor.camera().screen_to_world(cursor);
             state.drag = DragState::Drawing {
                 start: current_position_to_world,
                 current: current_position_to_world,
             };
         }
         Tool::Grab => {
-            let world_cursor = state.camera.screen_to_world(cursor);
+            let world_cursor = editor.camera().screen_to_world(cursor);
 
             state.drag = if let Some(id) = editor.cemetery().grave_at(world_cursor) {
                 DragState::MovingGrave {
@@ -77,7 +78,7 @@ fn handle_left_release(
 ) -> Option<canvas::Action<Message>> {
     match editor.selected_tool() {
         Tool::Select => {
-            let to_world = state.camera.screen_to_world(cursor);
+            let to_world = editor.camera().screen_to_world(cursor);
             return Some(Action::publish(Message::SelectGrave(
                 editor.cemetery().grave_at(to_world),
             )));
@@ -96,7 +97,7 @@ fn handle_left_release(
             }
         }
         Tool::StampGrave => {
-            let top_left = state.camera.screen_to_world(cursor);
+            let top_left = editor.camera().screen_to_world(cursor);
 
             return Some(Action::publish(Message::CreateGrave(
                 GraveRectangle::from_top_left_size(top_left, Size::new(100.0, 200.0)),
@@ -106,7 +107,7 @@ fn handle_left_release(
             state.drag = DragState::None;
         }
         Tool::Erase => {
-            let to_world = state.camera.screen_to_world(cursor);
+            let to_world = editor.camera().screen_to_world(cursor);
             if let Some(id) = editor.cemetery().grave_at(to_world) {
                 return Some(Action::publish(Message::EraseGrave(id)));
             }
@@ -127,7 +128,7 @@ fn handle_cursor_moved(
             if let DragState::Drawing { start, .. } = state.drag {
                 state.drag = DragState::Drawing {
                     start,
-                    current: state.camera.screen_to_world(cursor),
+                    current: editor.camera().screen_to_world(cursor),
                 };
 
                 return Some(Action::request_redraw());
@@ -140,7 +141,7 @@ fn handle_cursor_moved(
                 previous_cursor,
             } => {
                 let delta = cursor - previous_cursor;
-                let world_delta = state.camera.canvas_delta_to_world(delta);
+                let world_delta = editor.camera().canvas_delta_to_world(delta);
 
                 state.drag = DragState::MovingGrave {
                     id,
@@ -155,12 +156,11 @@ fn handle_cursor_moved(
             DragState::Panning { previous_cursor } => {
                 let delta: Vector = cursor - previous_cursor;
 
-                state.camera.pan_by_canvas_delta(delta);
                 state.drag = DragState::Panning {
                     previous_cursor: cursor,
                 };
 
-                return Some(Action::request_redraw());
+                return Some(Action::publish(Message::PanCamera(delta)));
             }
             DragState::None | DragState::Drawing { .. } => {}
         },

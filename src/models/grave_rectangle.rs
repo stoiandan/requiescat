@@ -26,6 +26,13 @@ impl GraveRectangle {
         self.size
     }
 
+    pub fn center(&self) -> Point {
+        Point::new(
+            self.top_left.x + self.size.width / 2.0,
+            self.top_left.y + self.size.height / 2.0,
+        )
+    }
+
     pub fn contains(&self, point: Point) -> bool {
         point.x >= self.top_left.x
             && point.x <= self.top_left.x + self.size.width
@@ -61,6 +68,14 @@ mod tests {
         assert!(rectangle.contains(Point::new(25.0, 45.0)));
         assert!(!rectangle.contains(Point::new(9.9, 45.0)));
         assert!(!rectangle.contains(Point::new(25.0, 60.1)));
+    }
+
+    #[test]
+    fn center_returns_middle_of_rectangle() {
+        let rectangle =
+            GraveRectangle::from_top_left_size(Point::new(10.0, 20.0), Size::new(30.0, 40.0));
+
+        assert_eq!(rectangle.center(), Point::new(25.0, 40.0));
     }
 
     #[test]

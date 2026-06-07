@@ -12,6 +12,7 @@ use crate::models::{Cemetery, GraveId, GraveRectangle, Person, PersonId};
 pub struct MapEditor {
     cemetery: Cemetery,
     toolbar: Toolbar,
+    camera: Camera,
     selected_grave: Option<GraveId>,
     selected_person: Option<PersonId>,
     person_search: String,
@@ -31,6 +32,8 @@ pub enum Message {
     ToolBarAction(ToolbarAction),
     EraseGrave(GraveId),
     MoveGrave { id: GraveId, delta: iced::Vector },
+    PanCamera(iced::Vector),
+    ZoomCamera { cursor: Point, amount: f32 },
     SelectGrave(Option<GraveId>),
     SelectPerson(PersonId),
     PersonSearchChanged(String),
@@ -47,6 +50,7 @@ impl Default for MapEditor {
         Self {
             cemetery: Cemetery::default(),
             toolbar: Toolbar::default(),
+            camera: Camera::default(),
             selected_grave: None,
             selected_person: None,
             person_search: String::new(),
@@ -76,8 +80,7 @@ impl MapEditor {
                 self.new_person.date_of_decease = value;
             }
             Message::CreateGrave(rectangle) => {
-                let id = self.cemetery.add_grave(rectangle);
-                self.selected_grave = Some(id);
+                self.cemetery.add_grave(rectangle);
             }
             Message::ToolBarAction(action) => self.toolbar.update(action),
             Message::EraseGrave(id) => {
@@ -89,12 +92,21 @@ impl MapEditor {
             Message::MoveGrave { id, delta } => {
                 self.cemetery.move_grave(id, delta);
             }
+            Message::PanCamera(delta) => {
+                self.camera.pan_by_canvas_delta(delta);
+            }
+            Message::ZoomCamera { cursor, amount } => {
+                self.camera.zoom_at(cursor, amount);
+            }
             Message::SelectGrave(id) => {
                 self.selected_grave = id;
             }
             Message::SelectPerson(id) => {
                 self.selected_person = Some(id);
                 self.selected_grave = self.cemetery.grave_for_person(id).map(|grave| grave.id());
+                if let Some(grave_id) = self.selected_grave {
+                    self.center_camera_on_grave(grave_id);
+                }
             }
             Message::PersonSearchChanged(value) => {
                 self.person_search = value;
@@ -341,7 +353,11 @@ impl MapEditor {
     ) -> Element<'_, Message> {
         let id = person.id();
         let mut actions =
-            row![button(text("Select")).on_press(Message::SelectPerson(id))].spacing(8);
+            row![].spacing(8);
+
+        if person.grave_id().is_some() {
+            actions = actions.push(button(text("Go to grave")).on_press(Message::SelectPerson(id)));
+        }
 
         if person.grave_id().is_some() {
             actions = actions
@@ -414,6 +430,10 @@ impl MapEditor {
         &self.cemetery
     }
 
+    pub(super) fn camera(&self) -> Camera {
+        self.camera
+    }
+
     fn selected_grave(&self) -> Option<GraveId> {
         self.selected_grave
             .filter(|id| self.cemetery.grave(*id).is_some())
@@ -450,6 +470,12 @@ impl MapEditor {
         true
     }
 
+    fn center_camera_on_grave(&mut self, grave_id: GraveId) {
+        if let Some(grave) = self.cemetery.grave(grave_id) {
+            self.camera.center_on(grave.rectangle().center());
+        }
+    }
+
     pub(super) fn selected_tool(&self) -> Tool {
         self.toolbar.selected_tool()
     }
@@ -479,7 +505,6 @@ impl NewPersonDraft {
 #[derive(Default)]
 pub struct CanvasState {
     pub(super) drag: DragState,
-    pub(super) camera: Camera,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -500,10 +525,6 @@ pub(super) enum DragState {
 }
 
 impl CanvasState {
-    pub(super) fn camera(&self) -> &Camera {
-        &self.camera
-    }
-
     pub fn left_pressed_at(&self) -> Option<Point> {
         match self.drag {
             DragState::Drawing { start, .. } => Some(start),
@@ -533,14 +554,14 @@ impl canvas::Program<Message> for MapEditor {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
 
         if self.show_grid() {
-            drawing::grid(&mut frame, &state.camera, bounds);
+            drawing::grid(&mut frame, &self.camera, bounds);
         }
 
-        drawing::grave_preview(&mut frame, state);
+        drawing::grave_preview(&mut frame, state, &self.camera);
         drawing::graves(
             &mut frame,
             self.cemetery.graves(),
-            &state.camera,
+            &self.camera,
             self.selected_grave,
         );
 

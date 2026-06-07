@@ -73,12 +73,12 @@ pub fn grid(frame: &mut canvas::Frame, camera: &Camera, bounds: Rectangle) {
     }
 }
 
-pub fn grave_preview(frame: &mut canvas::Frame, state: &CanvasState) {
+pub fn grave_preview(frame: &mut canvas::Frame, state: &CanvasState, camera: &Camera) {
     if let Some(current_drag) = state.current_drag_position() {
         let start = state.left_pressed_at().unwrap_or(current_drag);
         let preview = GraveRectangle::from_corners(start, current_drag);
-        let top_left = state.camera().world_to_screen(preview.top_left());
-        let size = preview.size() * state.camera().zoom;
+        let top_left = camera.world_to_screen(preview.top_left());
+        let size = preview.size() * camera.zoom;
         let path = canvas::Path::rectangle(top_left, size);
 
         frame.stroke(

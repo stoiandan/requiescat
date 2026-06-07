@@ -1,5 +1,6 @@
 use iced::{Point, Vector};
 
+#[derive(Debug, Clone, Copy)]
 pub(super) struct Camera {
     pub zoom: f32,
     pub offset: Point,
@@ -49,5 +50,14 @@ impl Camera {
 
         self.offset.x += before.x - after.x;
         self.offset.y += before.y - after.y;
+    }
+
+    pub fn center_on(&mut self, point: Point) {
+        const VIEWPORT_HINT: Vector = Vector::new(300.0, 250.0);
+
+        self.offset = Point::new(
+            point.x - VIEWPORT_HINT.x / self.zoom,
+            point.y - VIEWPORT_HINT.y / self.zoom,
+        );
     }
 }
