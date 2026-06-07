@@ -3,6 +3,7 @@ use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tool {
+    Select,
     Draw,
     StampGrave,
     Grab,
@@ -23,7 +24,7 @@ pub(super) struct Toolbar {
 impl Default for Toolbar {
     fn default() -> Self {
         Self {
-            selected_tool: Tool::Draw,
+            selected_tool: Tool::Select,
             show_grid: true,
         }
     }
@@ -32,6 +33,11 @@ impl Default for Toolbar {
 impl Toolbar {
     pub fn view(&self) -> Element<'_, ToolbarAction> {
         let tools = row![
+            tool_button(
+                "ⓘ",
+                ToolbarAction::SelectTool(Tool::Select),
+                self.selected_tool == Tool::Select,
+            ),
             tool_button(
                 "🖌",
                 ToolbarAction::SelectTool(Tool::Draw),

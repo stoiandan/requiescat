@@ -38,3 +38,39 @@ impl GraveRectangle {
         self.top_left.y += delta.y;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_corners_normalizes_top_left_and_size() {
+        let rectangle = GraveRectangle::from_corners(Point::new(8.0, 12.0), Point::new(2.0, 4.0));
+
+        assert_eq!(rectangle.top_left(), Point::new(2.0, 4.0));
+        assert_eq!(rectangle.size(), Size::new(6.0, 8.0));
+    }
+
+    #[test]
+    fn contains_includes_edges_and_rejects_points_outside() {
+        let rectangle =
+            GraveRectangle::from_top_left_size(Point::new(10.0, 20.0), Size::new(30.0, 40.0));
+
+        assert!(rectangle.contains(Point::new(10.0, 20.0)));
+        assert!(rectangle.contains(Point::new(40.0, 60.0)));
+        assert!(rectangle.contains(Point::new(25.0, 45.0)));
+        assert!(!rectangle.contains(Point::new(9.9, 45.0)));
+        assert!(!rectangle.contains(Point::new(25.0, 60.1)));
+    }
+
+    #[test]
+    fn translate_moves_only_the_top_left_corner() {
+        let mut rectangle =
+            GraveRectangle::from_top_left_size(Point::new(10.0, 20.0), Size::new(30.0, 40.0));
+
+        rectangle.translate(Vector::new(-5.0, 7.5));
+
+        assert_eq!(rectangle.top_left(), Point::new(5.0, 27.5));
+        assert_eq!(rectangle.size(), Size::new(30.0, 40.0));
+    }
+}

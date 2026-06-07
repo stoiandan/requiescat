@@ -1,10 +1,10 @@
 use iced::widget::{Action, canvas};
-use iced::{Point, Vector};
+use iced::{Point, Size, Vector};
 
 use super::Tool;
-use super::geometry::{find_grave_at, is_worth_drawing};
+use super::geometry::is_worth_drawing;
 use super::map_editor::{CanvasState, DragState, MapEditor, Message};
-use crate::models::Grave;
+use crate::models::GraveRectangle;
 
 pub fn handle_event(
     editor: &MapEditor,
@@ -44,6 +44,7 @@ pub fn handle_event(
 
 fn handle_left_press(editor: &MapEditor, state: &mut CanvasState, cursor: Point) {
     match editor.selected_tool() {
+        Tool::Select => {}
         Tool::Draw => {
             let current_position_to_world = state.camera.screen_to_world(cursor);
             state.drag = DragState::Drawing {
@@ -54,9 +55,9 @@ fn handle_left_press(editor: &MapEditor, state: &mut CanvasState, cursor: Point)
         Tool::Grab => {
             let world_cursor = state.camera.screen_to_world(cursor);
 
-            state.drag = if let Some(grave_index) = find_grave_at(editor.graves(), world_cursor) {
+            state.drag = if let Some(id) = editor.cemetery().grave_at(world_cursor) {
                 DragState::MovingGrave {
-                    index: grave_index,
+                    id,
                     previous_cursor: cursor,
                 }
             } else {
@@ -75,6 +76,12 @@ fn handle_left_release(
     cursor: Point,
 ) -> Option<canvas::Action<Message>> {
     match editor.selected_tool() {
+        Tool::Select => {
+            let to_world = state.camera.screen_to_world(cursor);
+            return Some(Action::publish(Message::SelectGrave(
+                editor.cemetery().grave_at(to_world),
+            )));
+        }
         Tool::Draw => {
             let DragState::Drawing { start, current } = state.drag else {
                 return None;
@@ -83,26 +90,26 @@ fn handle_left_release(
             state.drag = DragState::None;
 
             if is_worth_drawing(start, current) {
-                return Some(Action::publish(Message::GraveCreated(
-                    (start, current).into(),
+                return Some(Action::publish(Message::CreateGrave(
+                    GraveRectangle::from_corners(start, current),
                 )));
             }
         }
         Tool::StampGrave => {
             let top_left = state.camera.screen_to_world(cursor);
-            let bottom_right = Point::new(top_left.x + 100.0, top_left.y + 200.0);
 
-            return Some(Action::publish(Message::GraveCreated(Grave::from_corners(
-                top_left,
-                bottom_right,
-            ))));
+            return Some(Action::publish(Message::CreateGrave(
+                GraveRectangle::from_top_left_size(top_left, Size::new(100.0, 200.0)),
+            )));
         }
         Tool::Grab => {
             state.drag = DragState::None;
         }
         Tool::Erase => {
             let to_world = state.camera.screen_to_world(cursor);
-            return Some(Action::publish(Message::EraseAt(to_world)));
+            if let Some(id) = editor.cemetery().grave_at(to_world) {
+                return Some(Action::publish(Message::EraseGrave(id)));
+            }
         }
     }
 
@@ -115,6 +122,7 @@ fn handle_cursor_moved(
     cursor: Point,
 ) -> Option<canvas::Action<Message>> {
     match editor.selected_tool() {
+        Tool::Select => {}
         Tool::Draw => {
             if let DragState::Drawing { start, .. } = state.drag {
                 state.drag = DragState::Drawing {
@@ -128,19 +136,19 @@ fn handle_cursor_moved(
         Tool::StampGrave => {}
         Tool::Grab => match state.drag {
             DragState::MovingGrave {
-                index,
+                id,
                 previous_cursor,
             } => {
                 let delta = cursor - previous_cursor;
                 let world_delta = state.camera.canvas_delta_to_world(delta);
 
                 state.drag = DragState::MovingGrave {
-                    index,
+                    id,
                     previous_cursor: cursor,
                 };
 
                 return Some(Action::publish(Message::MoveGrave {
-                    index,
+                    id,
                     delta: world_delta,
                 }));
             }

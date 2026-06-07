@@ -3,7 +3,7 @@ use iced::{Point, Rectangle};
 
 use super::Camera;
 use super::map_editor::CanvasState;
-use crate::models::Grave;
+use crate::models::{Grave, GraveId, GraveRectangle};
 
 pub fn grid(frame: &mut canvas::Frame, camera: &Camera, bounds: Rectangle) {
     const SQUARE_SIZE: f32 = 50.0;
@@ -76,9 +76,9 @@ pub fn grid(frame: &mut canvas::Frame, camera: &Camera, bounds: Rectangle) {
 pub fn grave_preview(frame: &mut canvas::Frame, state: &CanvasState) {
     if let Some(current_drag) = state.current_drag_position() {
         let start = state.left_pressed_at().unwrap_or(current_drag);
-        let ghost_grave: Grave = (start, current_drag).into();
-        let top_left = state.camera().world_to_screen(ghost_grave.top_left());
-        let size = ghost_grave.size() * state.camera().zoom;
+        let preview = GraveRectangle::from_corners(start, current_drag);
+        let top_left = state.camera().world_to_screen(preview.top_left());
+        let size = preview.size() * state.camera().zoom;
         let path = canvas::Path::rectangle(top_left, size);
 
         frame.stroke(
@@ -96,11 +96,28 @@ pub fn grave_preview(frame: &mut canvas::Frame, state: &CanvasState) {
     }
 }
 
-pub fn graves(frame: &mut canvas::Frame, graves: &[Grave], camera: &Camera) {
+pub fn graves(
+    frame: &mut canvas::Frame,
+    graves: &[Grave],
+    camera: &Camera,
+    selected_grave: Option<GraveId>,
+) {
     for grave in graves {
-        let top_left = camera.world_to_screen(grave.top_left());
-        let size = grave.size() * camera.zoom;
+        let rectangle = grave.rectangle();
+        let top_left = camera.world_to_screen(rectangle.top_left());
+        let size = rectangle.size() * camera.zoom;
 
         frame.fill_rectangle(top_left, size, iced::Color::from_rgb(0.65, 0.121, 0.157));
+
+        if Some(grave.id()) == selected_grave {
+            let path = canvas::Path::rectangle(top_left, size);
+
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_color(iced::Color::from_rgb8(151, 255, 244))
+                    .with_width(3.0),
+            );
+        }
     }
 }
