@@ -5,7 +5,7 @@ use super::{Tool, Toolbar, ToolbarAction};
 use iced::widget::{
     button, canvas, column, container, mouse_area, row, scrollable, text, text_input,
 };
-use iced::{Element, Length, Point, Renderer, Theme};
+use iced::{Background, Border, Color, Element, Length, Point, Renderer, Shadow, Theme, Vector};
 
 use crate::models::{Cemetery, GraveId, GraveRectangle, Person, PersonDate, PersonId};
 
@@ -59,6 +59,13 @@ impl Default for MapEditor {
 }
 
 impl MapEditor {
+    pub fn from_cemetery(cemetery: Cemetery) -> Self {
+        Self {
+            cemetery,
+            ..Default::default()
+        }
+    }
+
     pub fn update(&mut self, message: Message) {
         match message {
             Message::OpenPersonDetails(_) => {}
@@ -344,22 +351,15 @@ impl MapEditor {
         }
 
         if selected_grave.is_some() {
-            let assign = button(text("Assign"));
-            let unassign = button(text("Unassign"));
-
-            let assign = if person.grave_id().is_none() {
-                assign.on_press(Message::AssignPersonToSelectedGrave(id))
+            let assignment_action = if person.grave_id().is_some() {
+                button(text("Unassign"))
+                    .on_press(Message::UnassignPersonFromGrave(id))
+                    .style(danger_button)
             } else {
-                assign
+                button(text("Assign")).on_press(Message::AssignPersonToSelectedGrave(id))
             };
 
-            let unassign = if person.grave_id().is_some() {
-                unassign.on_press(Message::UnassignPersonFromGrave(id))
-            } else {
-                unassign
-            };
-
-            content = content.push(assign).push(unassign);
+            content = content.push(assignment_action);
         }
 
         container(content)
@@ -433,7 +433,7 @@ impl MapEditor {
         .into()
     }
 
-    pub(super) fn cemetery(&self) -> &Cemetery {
+    pub fn cemetery(&self) -> &Cemetery {
         &self.cemetery
     }
 
@@ -521,6 +521,146 @@ impl NewPersonDraft {
         } else {
             PersonDate::parse(&self.date_of_decease).ok()
         }
+    }
+}
+
+fn danger_button(_: &Theme, status: button::Status) -> button::Style {
+    let pressed = status == button::Status::Pressed;
+    let hovered = status == button::Status::Hovered;
+
+    button::Style {
+        background: Some(Background::Color(if pressed {
+            Color::from_rgb8(122, 25, 36)
+        } else if hovered {
+            Color::from_rgb8(178, 45, 58)
+        } else {
+            Color::from_rgb8(151, 34, 47)
+        })),
+        text_color: Color::WHITE,
+        border: Border {
+            color: Color::from_rgb8(225, 91, 105),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba8(0, 0, 0, 0.35),
+            offset: if pressed {
+                Vector::new(0.0, 1.0)
+            } else {
+                Vector::new(0.0, 2.0)
+            },
+            blur_radius: 2.0,
+        },
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iced::Size;
+
+    use super::*;
+
+    fn rectangle_at(x: f32, y: f32) -> GraveRectangle {
+        GraveRectangle::from_top_left_size(Point::new(x, y), Size::new(40.0, 20.0))
+    }
+
+    fn create_person(editor: &mut MapEditor, grave_id: Option<GraveId>) -> PersonId {
+        editor.cemetery.create_person_with_details(
+            "Ada".to_owned(),
+            "Lovelace".to_owned(),
+            PersonDate::parse("10-12-1815").unwrap(),
+            None,
+            grave_id,
+        )
+    }
+
+    #[test]
+    fn assign_person_to_selected_grave_requires_a_selected_grave() {
+        let mut editor = MapEditor::default();
+        let grave_id = editor.cemetery.add_grave(rectangle_at(0.0, 0.0));
+        let person_id = create_person(&mut editor, None);
+
+        editor.update(Message::AssignPersonToSelectedGrave(person_id));
+
+        assert_eq!(
+            editor.cemetery.person(person_id).and_then(Person::grave_id),
+            None
+        );
+
+        editor.update(Message::SelectGrave(Some(grave_id)));
+        editor.update(Message::AssignPersonToSelectedGrave(person_id));
+
+        assert_eq!(
+            editor.cemetery.person(person_id).and_then(Person::grave_id),
+            Some(grave_id)
+        );
+    }
+
+    #[test]
+    fn unassign_person_from_grave_clears_their_grave() {
+        let mut editor = MapEditor::default();
+        let grave_id = editor.cemetery.add_grave(rectangle_at(0.0, 0.0));
+        let person_id = create_person(&mut editor, Some(grave_id));
+
+        editor.update(Message::UnassignPersonFromGrave(person_id));
+
+        assert_eq!(
+            editor.cemetery.person(person_id).and_then(Person::grave_id),
+            None
+        );
+    }
+
+    #[test]
+    fn select_person_goes_to_their_grave() {
+        let mut editor = MapEditor::default();
+        let grave_id = editor.cemetery.add_grave(rectangle_at(100.0, 200.0));
+        let person_id = create_person(&mut editor, Some(grave_id));
+
+        editor.update(Message::SelectPerson(person_id));
+
+        assert_eq!(editor.selected_person, Some(person_id));
+        assert_eq!(editor.selected_grave, Some(grave_id));
+        assert_eq!(editor.camera.offset, Point::new(-180.0, -40.0));
+    }
+
+    #[test]
+    fn new_person_requires_name_and_valid_birth_date() {
+        let mut editor = MapEditor::default();
+
+        editor.update(Message::NewPersonFirstNameChanged("Ada".to_owned()));
+        editor.update(Message::NewPersonLastNameChanged("Lovelace".to_owned()));
+        editor.update(Message::NewPersonDateOfBirthChanged(
+            "not a date".to_owned(),
+        ));
+
+        assert!(!editor.can_submit_new_person());
+
+        editor.update(Message::NewPersonDateOfBirthChanged(
+            "10-12-1815".to_owned(),
+        ));
+        editor.update(Message::NewPersonDateOfDeceaseChanged(
+            "also bad".to_owned(),
+        ));
+
+        assert!(!editor.can_submit_new_person());
+
+        editor.update(Message::NewPersonDateOfDeceaseChanged(
+            "27-11-1852".to_owned(),
+        ));
+
+        assert!(editor.can_submit_new_person());
+    }
+
+    #[test]
+    fn danger_button_uses_red_background() {
+        let style = danger_button(&Theme::Dark, button::Status::Active);
+
+        assert_eq!(
+            style.background,
+            Some(Background::Color(Color::from_rgb8(151, 34, 47)))
+        );
+        assert_eq!(style.text_color, Color::WHITE);
     }
 }
 

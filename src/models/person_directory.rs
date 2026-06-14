@@ -7,6 +7,19 @@ pub struct PersonDirectory {
 }
 
 impl PersonDirectory {
+    pub fn from_people(people: Vec<Person>) -> Self {
+        let next_person_id = people
+            .iter()
+            .map(|person| person.id().value())
+            .max()
+            .unwrap_or_default();
+
+        Self {
+            people,
+            next_person_id,
+        }
+    }
+
     pub fn create_person_with_details(
         &mut self,
         first_name: String,

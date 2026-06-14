@@ -136,10 +136,9 @@ fn grave_labels(
     top_left: Point,
     size: iced::Size,
 ) {
-    const PADDING: f32 = 5.0;
+    const PADDING: f32 = 1.0;
     const MIN_FONT_SIZE: f32 = 9.0;
     const MAX_FONT_SIZE: f32 = 13.0;
-    const APPROX_WORLD_CHARACTER_WIDTH: f32 = 7.0;
 
     let font_size = label_font_size(size.width);
     let row_height = font_size * 1.25;
@@ -149,10 +148,8 @@ fn grave_labels(
     }
 
     let rows = visible_label_rows(rows, format!("grave {}", grave_id), max_rows);
-    let max_width = size.width - PADDING * 2.0;
-    let max_characters = (max_width / (font_size / 12.0 * APPROX_WORLD_CHARACTER_WIDTH))
-        .floor()
-        .max(0.0) as usize;
+    let max_width = (size.width - PADDING * 2.0).max(0.0);
+    let max_characters = label_character_capacity(max_width, font_size);
 
     for (index, row) in rows.into_iter().enumerate() {
         let row = truncate_label(&row, max_characters);
@@ -178,6 +175,14 @@ fn grave_labels(
 
 fn label_font_size(screen_width: f32) -> f32 {
     (screen_width / 8.5).clamp(9.0, 13.0)
+}
+
+fn label_character_capacity(available_width: f32, font_size: f32) -> usize {
+    const APPROX_CHARACTER_WIDTH_RATIO: f32 = 0.52;
+
+    (available_width / (font_size * APPROX_CHARACTER_WIDTH_RATIO))
+        .floor()
+        .max(0.0) as usize
 }
 
 fn grave_label_rows(cemetery: &Cemetery, grave_id: GraveId) -> Vec<String> {
@@ -265,6 +270,12 @@ mod tests {
     fn label_font_size_is_clamped_to_avoid_zoom_jumps() {
         assert_eq!(label_font_size(20.0), 9.0);
         assert_eq!(label_font_size(500.0), 13.0);
+    }
+
+    #[test]
+    fn label_character_capacity_expands_with_available_width() {
+        assert_eq!(label_character_capacity(46.8, 9.0), 10);
+        assert_eq!(label_character_capacity(93.6, 9.0), 20);
     }
 
     #[test]

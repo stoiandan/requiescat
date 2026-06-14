@@ -1,5 +1,11 @@
-use crate::models::{Cemetery, Grave, GraveId, GraveRectangle, Person, PersonDate, PersonId};
+use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use iced::{Point, Size};
+use rusqlite::{Connection, params};
+
+use crate::models::{Cemetery, Grave, GraveId, GraveRectangle, Person, PersonDate, PersonId};
 
 pub trait CemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError>;
@@ -8,7 +14,247 @@ pub trait CemeteryRepository {
 
 #[derive(Debug)]
 pub enum PersistenceError {
-    StorageUnavailable,
+    Io(std::io::Error),
+    Sqlite(rusqlite::Error),
+    InvalidData(String),
+}
+
+impl fmt::Display for PersistenceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "{error}"),
+            Self::Sqlite(error) => write!(formatter, "{error}"),
+            Self::InvalidData(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<std::io::Error> for PersistenceError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<rusqlite::Error> for PersistenceError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CemeteryFile {
+    path: PathBuf,
+    name: String,
+}
+
+impl CemeteryFile {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CemeteryLibrary {
+    directory: PathBuf,
+}
+
+impl CemeteryLibrary {
+    pub fn for_current_user() -> Result<Self, PersistenceError> {
+        let directory = application_data_directory()?.join("Cemeteries");
+        Self::new(directory)
+    }
+
+    pub fn new(directory: PathBuf) -> Result<Self, PersistenceError> {
+        fs::create_dir_all(&directory)?;
+        Ok(Self { directory })
+    }
+
+    pub fn cemeteries(&self) -> Result<Vec<CemeteryFile>, PersistenceError> {
+        let mut cemeteries = fs::read_dir(&self.directory)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| is_sqlite_file(path))
+            .map(|path| CemeteryFile {
+                name: cemetery_name(&path),
+                path,
+            })
+            .collect::<Vec<_>>();
+
+        cemeteries.sort_by_key(|cemetery| cemetery.name.to_lowercase());
+        Ok(cemeteries)
+    }
+
+    pub fn import(&self, source: &Path) -> Result<PathBuf, PersistenceError> {
+        SqliteCemeteryRepository::new(source.to_owned()).load()?;
+
+        let file_name = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Imported Cemetery.sqlite");
+        let destination = unique_destination(&self.directory, file_name);
+
+        fs::copy(source, &destination)?;
+        Ok(destination)
+    }
+
+    pub fn create(&self, name: &str) -> Result<PathBuf, PersistenceError> {
+        let file_name = cemetery_file_name(name)?;
+        let destination = unique_destination(&self.directory, &file_name);
+        let mut repository = SqliteCemeteryRepository::new(destination.clone());
+        repository.save(&Cemetery::default())?;
+        Ok(destination)
+    }
+
+    pub fn export(&self, source: &Path, destination: &Path) -> Result<(), PersistenceError> {
+        if source == destination {
+            return Ok(());
+        }
+
+        fs::copy(source, destination)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SqliteCemeteryRepository {
+    path: PathBuf,
+}
+
+impl SqliteCemeteryRepository {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn connection(&self) -> Result<Connection, PersistenceError> {
+        let connection = Connection::open(&self.path)?;
+        connection.execute_batch(
+            "
+            PRAGMA foreign_keys = ON;
+
+            CREATE TABLE IF NOT EXISTS graves (
+                id INTEGER PRIMARY KEY,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                width REAL NOT NULL,
+                height REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS persons (
+                id INTEGER PRIMARY KEY,
+                first_name TEXT NOT NULL,
+                last_name TEXT NOT NULL,
+                date_of_birth TEXT NOT NULL,
+                date_of_decease TEXT,
+                grave_id INTEGER REFERENCES graves(id) ON DELETE SET NULL
+            );
+            ",
+        )?;
+        Ok(connection)
+    }
+}
+
+impl CemeteryRepository for SqliteCemeteryRepository {
+    fn load(&self) -> Result<Cemetery, PersistenceError> {
+        let connection = self.connection()?;
+
+        let graves = {
+            let mut statement =
+                connection.prepare("SELECT id, x, y, width, height FROM graves ORDER BY id")?;
+            let rows = statement.query_map([], |row| {
+                Ok(GraveRow {
+                    id: row.get(0)?,
+                    x: row.get(1)?,
+                    y: row.get(2)?,
+                    width: row.get(3)?,
+                    height: row.get(4)?,
+                })
+            })?;
+
+            rows.collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(Grave::from)
+                .collect()
+        };
+
+        let people = {
+            let mut statement = connection.prepare(
+                "
+                SELECT id, first_name, last_name, date_of_birth,
+                       COALESCE(date_of_decease, ''), grave_id
+                FROM persons
+                ORDER BY id
+                ",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok(PersonRow {
+                    id: row.get(0)?,
+                    first_name: row.get(1)?,
+                    last_name: row.get(2)?,
+                    date_of_birth: row.get(3)?,
+                    date_of_decease: row.get(4)?,
+                    grave_id: row.get(5)?,
+                })
+            })?;
+
+            rows.collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(Person::try_from)
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        Ok(Cemetery::from_records(graves, people))
+    }
+
+    fn save(&mut self, cemetery: &Cemetery) -> Result<(), PersistenceError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+
+        transaction.execute("DELETE FROM persons", [])?;
+        transaction.execute("DELETE FROM graves", [])?;
+
+        {
+            let mut statement = transaction.prepare(
+                "INSERT INTO graves (id, x, y, width, height) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+
+            for grave in cemetery.graves().iter().copied() {
+                let row = GraveRow::from(grave);
+                statement.execute(params![row.id, row.x, row.y, row.width, row.height])?;
+            }
+        }
+
+        {
+            let mut statement = transaction.prepare(
+                "
+                INSERT INTO persons (
+                    id, first_name, last_name, date_of_birth, date_of_decease, grave_id
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ",
+            )?;
+
+            for person in cemetery.search_people("") {
+                let row = PersonRow::from(person.clone());
+                let date_of_decease =
+                    (!row.date_of_decease.is_empty()).then_some(row.date_of_decease.as_str());
+                statement.execute(params![
+                    row.id,
+                    row.first_name,
+                    row.last_name,
+                    row.date_of_birth,
+                    date_of_decease,
+                    row.grave_id
+                ])?;
+            }
+        }
+
+        transaction.commit()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -71,23 +317,296 @@ impl From<Person> for PersonRow {
     }
 }
 
-impl From<PersonRow> for Person {
-    fn from(row: PersonRow) -> Self {
-        Person::from_parts(
+impl TryFrom<PersonRow> for Person {
+    type Error = PersistenceError;
+
+    fn try_from(row: PersonRow) -> Result<Self, Self::Error> {
+        let date_of_birth = PersonDate::parse(&row.date_of_birth).map_err(|_| {
+            PersistenceError::InvalidData(format!(
+                "Person {} has an invalid birth date: {}",
+                row.id, row.date_of_birth
+            ))
+        })?;
+        let date_of_decease = if row.date_of_decease.trim().is_empty() {
+            None
+        } else {
+            Some(PersonDate::parse(&row.date_of_decease).map_err(|_| {
+                PersistenceError::InvalidData(format!(
+                    "Person {} has an invalid decease date: {}",
+                    row.id, row.date_of_decease
+                ))
+            })?)
+        };
+
+        Ok(Person::from_parts(
             PersonId::new(row.id),
             row.first_name,
             row.last_name,
-            PersonDate::parse(&row.date_of_birth)
-                .expect("persisted person birth date should be a valid dd-mm-yyyy date"),
-            if row.date_of_decease.trim().is_empty() {
-                None
-            } else {
-                Some(
-                    PersonDate::parse(&row.date_of_decease)
-                        .expect("persisted person decease date should be a valid dd-mm-yyyy date"),
-                )
-            },
+            date_of_birth,
+            date_of_decease,
             row.grave_id.map(GraveId::new),
+        ))
+    }
+}
+
+fn application_data_directory() -> Result<PathBuf, PersistenceError> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            PersistenceError::InvalidData("The HOME directory is unavailable".to_owned())
+        })?;
+        Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("Requiescat"))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let app_data = std::env::var_os("APPDATA").ok_or_else(|| {
+            PersistenceError::InvalidData("The APPDATA directory is unavailable".to_owned())
+        })?;
+        Ok(PathBuf::from(app_data).join("Requiescat"))
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_application_data_directory(
+            std::env::var_os("XDG_DATA_HOME"),
+            std::env::var_os("HOME"),
         )
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Err(PersistenceError::InvalidData(
+            "This operating system is not supported.".to_owned(),
+        ))
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_application_data_directory(
+    data_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Result<PathBuf, PersistenceError> {
+    if let Some(data_home) = data_home.filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(data_home).join("requiescat"));
+    }
+
+    let home = home.filter(|path| !path.is_empty()).ok_or_else(|| {
+        PersistenceError::InvalidData(
+            "Neither XDG_DATA_HOME nor HOME is available on Linux.".to_owned(),
+        )
+    })?;
+
+    Ok(PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("requiescat"))
+}
+
+fn is_sqlite_file(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "sqlite" | "sqlite3" | "db"
+                )
+            })
+}
+
+fn cemetery_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Unnamed Cemetery")
+        .to_owned()
+}
+
+fn cemetery_file_name(name: &str) -> Result<String, PersistenceError> {
+    let name = name.trim();
+
+    if name.is_empty() {
+        return Err(PersistenceError::InvalidData(
+            "Enter a cemetery name.".to_owned(),
+        ));
+    }
+
+    if matches!(name, "." | "..")
+        || name.contains(['/', '\\'])
+        || name.chars().any(char::is_control)
+    {
+        return Err(PersistenceError::InvalidData(
+            "The cemetery name contains invalid characters.".to_owned(),
+        ));
+    }
+
+    let path = Path::new(name);
+    let stem = match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension)
+            if matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "sqlite" | "sqlite3" | "db"
+            ) =>
+        {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or(name)
+        }
+        _ => name,
+    };
+
+    Ok(format!("{stem}.sqlite"))
+}
+
+fn unique_destination(directory: &Path, file_name: &str) -> PathBuf {
+    let source = Path::new(file_name);
+    let stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("Imported Cemetery");
+    let extension = source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("sqlite");
+
+    let mut destination = directory.join(format!("{stem}.{extension}"));
+    let mut suffix = 2;
+
+    while destination.exists() {
+        destination = directory.join(format!("{stem} {suffix}.{extension}"));
+        suffix += 1;
+    }
+
+    destination
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unique_destination_adds_a_suffix_when_file_exists() {
+        let directory = std::env::temp_dir().join(format!(
+            "requiescat-persistence-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let existing = directory.join("Central.sqlite");
+        fs::write(&existing, []).unwrap();
+
+        let destination = unique_destination(&directory, "Central.sqlite");
+
+        assert_eq!(destination, directory.join("Central 2.sqlite"));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn library_creates_an_empty_cemetery_with_a_unique_name() {
+        let directory =
+            std::env::temp_dir().join(format!("requiescat-library-test-{}", std::process::id()));
+        let library = CemeteryLibrary::new(directory.clone()).unwrap();
+
+        let first = library.create("Central").unwrap();
+        let second = library.create("Central").unwrap();
+
+        assert_eq!(first, directory.join("Central.sqlite"));
+        assert_eq!(second, directory.join("Central 2.sqlite"));
+        assert!(SqliteCemeteryRepository::new(first).load().is_ok());
+        assert!(SqliteCemeteryRepository::new(second).load().is_ok());
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn cemetery_file_name_validates_and_normalizes_names() {
+        assert_eq!(
+            cemetery_file_name("  Central Cemetery  ").unwrap(),
+            "Central Cemetery.sqlite"
+        );
+        assert_eq!(
+            cemetery_file_name("Central.sqlite").unwrap(),
+            "Central.sqlite"
+        );
+        assert!(cemetery_file_name(" ").is_err());
+        assert!(cemetery_file_name("../Central").is_err());
+    }
+
+    #[test]
+    fn linux_data_directory_prefers_xdg_data_home() {
+        let directory = linux_application_data_directory(
+            Some("/home/dan/.data".into()),
+            Some("/home/dan".into()),
+        )
+        .unwrap();
+
+        assert_eq!(directory, PathBuf::from("/home/dan/.data/requiescat"));
+    }
+
+    #[test]
+    fn linux_data_directory_falls_back_to_local_share() {
+        let directory = linux_application_data_directory(None, Some("/home/dan".into())).unwrap();
+
+        assert_eq!(
+            directory,
+            PathBuf::from("/home/dan/.local/share/requiescat")
+        );
+    }
+
+    #[test]
+    fn linux_data_directory_requires_an_xdg_or_home_directory() {
+        assert!(linux_application_data_directory(None, None).is_err());
+    }
+
+    #[test]
+    fn sqlite_repository_round_trips_cemetery_data() {
+        let path = std::env::temp_dir().join(format!(
+            "requiescat-round-trip-{}.sqlite",
+            std::process::id()
+        ));
+        let mut cemetery = Cemetery::default();
+        let grave_id = cemetery.add_grave(GraveRectangle::from_top_left_size(
+            Point::new(12.0, 24.0),
+            Size::new(40.0, 80.0),
+        ));
+        cemetery.create_person_with_details(
+            "Ada".to_owned(),
+            "Lovelace".to_owned(),
+            PersonDate::parse("10-12-1815").unwrap(),
+            Some(PersonDate::parse("27-11-1852").unwrap()),
+            Some(grave_id),
+        );
+
+        let mut repository = SqliteCemeteryRepository::new(path.clone());
+        repository.save(&cemetery).unwrap();
+        let mut loaded = repository.load().unwrap();
+
+        assert_eq!(loaded.graves().len(), 1);
+        assert_eq!(loaded.search_people("").len(), 1);
+        assert_eq!(loaded.search_people("Ada")[0].grave_id(), Some(grave_id));
+        assert_eq!(
+            loaded.add_grave(GraveRectangle::from_top_left_size(
+                Point::new(100.0, 100.0),
+                Size::new(20.0, 40.0),
+            )),
+            GraveId::new(2)
+        );
+        assert_eq!(
+            loaded.create_person_with_details(
+                "Grace".to_owned(),
+                "Hopper".to_owned(),
+                PersonDate::parse("09-12-1906").unwrap(),
+                None,
+                None,
+            ),
+            PersonId::new(2)
+        );
+
+        fs::remove_file(path).unwrap();
     }
 }

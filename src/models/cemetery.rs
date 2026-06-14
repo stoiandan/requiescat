@@ -11,6 +11,13 @@ pub struct Cemetery {
 }
 
 impl Cemetery {
+    pub fn from_records(graves: Vec<Grave>, people: Vec<Person>) -> Self {
+        Self {
+            map: CemeteryMap::from_graves(graves),
+            people: PersonDirectory::from_people(people),
+        }
+    }
+
     pub fn add_grave(&mut self, rectangle: GraveRectangle) -> GraveId {
         self.map.add_grave(rectangle)
     }

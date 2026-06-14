@@ -1,0 +1,128 @@
+name: Build desktop apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows portable app
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release executable
+        run: cargo build --locked --release
+
+      - name: Package portable executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/requiescat
+          Copy-Item target/release/requiescat.exe dist/requiescat/
+          Copy-Item LICENSE dist/requiescat/
+          Compress-Archive `
+            -Path dist/requiescat `
+            -DestinationPath requiescat-windows-x86_64.zip
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v7
+        with:
+          name: requiescat-windows-x86_64
+          path: requiescat-windows-x86_64.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal app
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build Apple Silicon executable
+        run: cargo build --locked --release --target aarch64-apple-darwin
+
+      - name: Build Intel executable
+        run: cargo build --locked --release --target x86_64-apple-darwin
+
+      - name: Create universal app bundle
+        run: |
+          APP="dist/Requiescat.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+          lipo -create \
+            target/aarch64-apple-darwin/release/requiescat \
+            target/x86_64-apple-darwin/release/requiescat \
+            -output "$APP/Contents/MacOS/requiescat"
+
+          cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
+          cp packaging/icons/requiescat.icns \
+            "$APP/Contents/Resources/requiescat.icns"
+          cp LICENSE "$APP/Contents/Resources/LICENSE"
+          chmod +x "$APP/Contents/MacOS/requiescat"
+
+          plutil -lint "$APP/Contents/Info.plist"
+          lipo -info "$APP/Contents/MacOS/requiescat"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$APP" requiescat-macos-universal.zip
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v7
+        with:
+          name: requiescat-macos-universal
+          path: requiescat-macos-universal.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux portable app
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwayland-dev \
+            libxkbcommon-dev \
+            pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release executable
+        run: cargo build --locked --release
+
+      - name: Package portable executable
+        run: |
+          mkdir -p dist/requiescat
+          cp target/release/requiescat dist/requiescat/
+          cp LICENSE dist/requiescat/
+          tar -czf requiescat-linux-x86_64.tar.gz -C dist requiescat
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v7
+        with:
+          name: requiescat-linux-x86_64
+          path: requiescat-linux-x86_64.tar.gz
+          if-no-files-found: error

@@ -9,6 +9,19 @@ pub struct CemeteryMap {
 }
 
 impl CemeteryMap {
+    pub fn from_graves(graves: Vec<Grave>) -> Self {
+        let next_grave_id = graves
+            .iter()
+            .map(|grave| grave.id().value())
+            .max()
+            .unwrap_or_default();
+
+        Self {
+            graves,
+            next_grave_id,
+        }
+    }
+
     pub fn add_grave(&mut self, rectangle: GraveRectangle) -> GraveId {
         let id = self.next_id();
         self.graves.push(Grave::new(id, rectangle));

@@ -1,16 +1,20 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod models;
-#[allow(dead_code)]
 mod persistence;
 mod screens;
 
+use std::path::PathBuf;
+
 use iced::widget::{container, text};
 use iced::{Element, Length, Size, Subscription, Task, keyboard, window};
-use screens::{MapEditor, MapEditorMessage};
+use persistence::{CemeteryFile, CemeteryLibrary, CemeteryRepository, SqliteCemeteryRepository};
+use screens::{MapEditor, MapEditorMessage, StartMenuMessage, start_menu_view};
 
 fn main() -> iced::Result {
-    iced::daemon(Requiesta::boot, Requiesta::update, Requiesta::view)
-        .title(Requiesta::title)
-        .subscription(Requiesta::subscription)
+    iced::daemon(Requiescat::boot, Requiescat::update, Requiescat::view)
+        .title(Requiescat::title)
+        .subscription(Requiescat::subscription)
         .run()
 }
 
@@ -22,30 +26,70 @@ enum Message {
     NewPersonWindowOpened(window::Id),
     WindowClosed(window::Id),
     Keyboard(keyboard::Event),
+    StartMenu(StartMenuMessage),
+    ImportPathChosen(Option<PathBuf>),
+    ExportPathChosen(Option<PathBuf>),
     Editor(MapEditorMessage),
 }
 
-#[derive(Default)]
-struct Requiesta {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MainScreen {
+    StartMenu,
+    MapEditor,
+}
+
+struct Requiescat {
     editor: MapEditor,
+    main_screen: MainScreen,
     main_window: Option<window::Id>,
     person_directory_window: Option<window::Id>,
     person_detail_windows: Vec<(window::Id, crate::models::PersonId)>,
     new_person_window: Option<window::Id>,
+    library: Option<CemeteryLibrary>,
+    cemeteries: Vec<CemeteryFile>,
+    selected_cemetery: Option<PathBuf>,
+    active_database: Option<PathBuf>,
+    show_cemeteries: bool,
+    show_create_cemetery: bool,
+    new_cemetery_name: String,
+    status: Option<String>,
 }
 
-impl Requiesta {
+impl Requiescat {
     fn boot() -> (Self, Task<Message>) {
+        let (library, cemeteries, status) = match CemeteryLibrary::for_current_user() {
+            Ok(library) => {
+                let result = library.cemeteries();
+                match result {
+                    Ok(cemeteries) => (Some(library), cemeteries, None),
+                    Err(error) => (Some(library), Vec::new(), Some(error.to_string())),
+                }
+            }
+            Err(error) => (None, Vec::new(), Some(error.to_string())),
+        };
+
         let (window_id, open) = window::open(window::Settings {
-            size: Size::new(1100.0, 760.0),
-            min_size: Some(Size::new(760.0, 520.0)),
+            size: Size::new(760.0, 520.0),
+            min_size: Some(Size::new(620.0, 420.0)),
             ..Default::default()
         });
 
         (
             Self {
+                editor: MapEditor::default(),
+                main_screen: MainScreen::StartMenu,
                 main_window: Some(window_id),
-                ..Default::default()
+                person_directory_window: None,
+                person_detail_windows: Vec::new(),
+                new_person_window: None,
+                library,
+                cemeteries,
+                selected_cemetery: None,
+                active_database: None,
+                show_cemeteries: false,
+                show_create_cemetery: false,
+                new_cemetery_name: String::new(),
+                status,
             },
             open.map(Message::MainWindowOpened),
         )
@@ -88,6 +132,10 @@ impl Requiesta {
                     .retain(|(window_id, _)| *window_id != id);
             }
             Message::Keyboard(event) => {
+                if self.main_screen != MainScreen::MapEditor {
+                    return Task::none();
+                }
+
                 if is_command_shortcut(&event, 'n') {
                     return self.open_new_person_dialog();
                 }
@@ -96,11 +144,25 @@ impl Requiesta {
                     return self.open_person_directory();
                 }
             }
+            Message::StartMenu(message) => {
+                return self.update_start_menu(message);
+            }
+            Message::ImportPathChosen(path) => {
+                if let Some(path) = path {
+                    self.import_cemetery(path);
+                }
+            }
+            Message::ExportPathChosen(path) => {
+                if let Some(destination) = path {
+                    self.export_selected_cemetery(destination);
+                }
+            }
             Message::Editor(MapEditorMessage::OpenPersonDetails(person_id)) => {
                 return self.open_person_details(person_id);
             }
             Message::Editor(MapEditorMessage::SubmitNewPerson) => {
                 if self.editor.submit_new_person() {
+                    self.save_active_cemetery();
                     if let Some(id) = self.new_person_window.take() {
                         return window::close(id);
                     }
@@ -108,6 +170,7 @@ impl Requiesta {
             }
             Message::Editor(message) => {
                 self.editor.update(message);
+                self.save_active_cemetery();
             }
         }
 
@@ -128,7 +191,18 @@ impl Requiesta {
                 .person_details_view(*person_id)
                 .map(Message::Editor)
         } else if Some(window) == self.main_window {
-            self.editor.view().map(Message::Editor)
+            match self.main_screen {
+                MainScreen::StartMenu => start_menu_view(
+                    &self.cemeteries,
+                    self.selected_cemetery.as_deref(),
+                    self.show_cemeteries,
+                    self.show_create_cemetery,
+                    &self.new_cemetery_name,
+                    self.status.as_deref(),
+                )
+                .map(Message::StartMenu),
+                MainScreen::MapEditor => self.editor.view().map(Message::Editor),
+            }
         } else {
             container(text("Unknown window"))
                 .width(Length::Fill)
@@ -149,8 +223,15 @@ impl Requiesta {
             .any(|(window_id, _)| *window_id == window)
         {
             "Person Details".to_owned()
+        } else if self.main_screen == MainScreen::MapEditor {
+            self.active_database
+                .as_deref()
+                .and_then(|path| path.file_stem())
+                .and_then(|name| name.to_str())
+                .map(|name| format!("{name} - Requiescat"))
+                .unwrap_or_else(|| "Requiescat".to_owned())
         } else {
-            "Requiesta".to_owned()
+            "Requiescat - Cemetery Library".to_owned()
         }
     }
 
@@ -213,6 +294,172 @@ impl Requiesta {
         self.new_person_window = Some(id);
 
         open.map(Message::NewPersonWindowOpened)
+    }
+
+    fn update_start_menu(&mut self, message: StartMenuMessage) -> Task<Message> {
+        match message {
+            StartMenuMessage::ShowCemeteries => {
+                self.show_cemeteries = true;
+                self.show_create_cemetery = false;
+            }
+            StartMenuMessage::Back => {
+                self.show_cemeteries = false;
+                self.show_create_cemetery = false;
+                self.new_cemetery_name.clear();
+                self.status = None;
+            }
+            StartMenuMessage::OpenCemetery(path) => {
+                self.selected_cemetery = Some(path);
+                self.status = None;
+                return self.load_selected_cemetery();
+            }
+            StartMenuMessage::ShowCreateCemetery => {
+                self.show_cemeteries = false;
+                self.show_create_cemetery = true;
+                self.new_cemetery_name.clear();
+                self.status = None;
+            }
+            StartMenuMessage::CemeteryNameChanged(name) => {
+                self.new_cemetery_name = name;
+                self.status = None;
+            }
+            StartMenuMessage::SubmitCreateCemetery => {
+                if !self.new_cemetery_name.trim().is_empty() {
+                    return self.create_cemetery();
+                }
+            }
+            StartMenuMessage::ImportCemetery => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("SQLite cemetery", &["sqlite", "sqlite3", "db"])
+                            .pick_file()
+                            .await
+                            .map(|file| file.path().to_owned())
+                    },
+                    Message::ImportPathChosen,
+                );
+            }
+            StartMenuMessage::ExportSelected => {
+                let file_name = self
+                    .selected_cemetery
+                    .as_deref()
+                    .and_then(|path| path.file_name())
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Cemetery.sqlite")
+                    .to_owned();
+
+                return Task::perform(
+                    async move {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("SQLite cemetery", &["sqlite"])
+                            .set_file_name(&file_name)
+                            .save_file()
+                            .await
+                            .map(|file| file.path().to_owned())
+                    },
+                    Message::ExportPathChosen,
+                );
+            }
+        }
+
+        Task::none()
+    }
+
+    fn load_selected_cemetery(&mut self) -> Task<Message> {
+        let Some(path) = self.selected_cemetery.clone() else {
+            return Task::none();
+        };
+
+        match SqliteCemeteryRepository::new(path.clone()).load() {
+            Ok(cemetery) => {
+                self.editor = MapEditor::from_cemetery(cemetery);
+                self.active_database = Some(path);
+                self.main_screen = MainScreen::MapEditor;
+                self.status = None;
+
+                self.main_window
+                    .map(|id| window::resize(id, Size::new(1100.0, 760.0)))
+                    .unwrap_or_else(Task::none)
+            }
+            Err(error) => {
+                self.status = Some(format!("Could not load cemetery: {error}"));
+                Task::none()
+            }
+        }
+    }
+
+    fn import_cemetery(&mut self, source: PathBuf) {
+        let Some(library) = &self.library else {
+            self.status = Some("The cemetery library is unavailable.".to_owned());
+            return;
+        };
+
+        match library.import(&source) {
+            Ok(imported) => {
+                self.selected_cemetery = Some(imported);
+                self.show_cemeteries = true;
+                self.refresh_cemeteries();
+                self.status = Some("Cemetery imported.".to_owned());
+            }
+            Err(error) => {
+                self.status = Some(format!("Could not import cemetery: {error}"));
+            }
+        }
+    }
+
+    fn create_cemetery(&mut self) -> Task<Message> {
+        let Some(library) = &self.library else {
+            self.status = Some("The cemetery library is unavailable.".to_owned());
+            return Task::none();
+        };
+
+        match library.create(&self.new_cemetery_name) {
+            Ok(path) => {
+                self.selected_cemetery = Some(path);
+                self.show_create_cemetery = false;
+                self.new_cemetery_name.clear();
+                self.refresh_cemeteries();
+                self.load_selected_cemetery()
+            }
+            Err(error) => {
+                self.status = Some(format!("Could not create cemetery: {error}"));
+                Task::none()
+            }
+        }
+    }
+
+    fn export_selected_cemetery(&mut self, destination: PathBuf) {
+        let (Some(library), Some(source)) = (&self.library, &self.selected_cemetery) else {
+            return;
+        };
+
+        self.status = match library.export(source, &destination) {
+            Ok(()) => Some("Cemetery exported.".to_owned()),
+            Err(error) => Some(format!("Could not export cemetery: {error}")),
+        };
+    }
+
+    fn refresh_cemeteries(&mut self) {
+        let Some(library) = &self.library else {
+            return;
+        };
+
+        match library.cemeteries() {
+            Ok(cemeteries) => self.cemeteries = cemeteries,
+            Err(error) => self.status = Some(format!("Could not refresh cemeteries: {error}")),
+        }
+    }
+
+    fn save_active_cemetery(&mut self) {
+        let Some(path) = self.active_database.clone() else {
+            return;
+        };
+
+        let mut repository = SqliteCemeteryRepository::new(path);
+        if let Err(error) = repository.save(self.editor.cemetery()) {
+            self.status = Some(format!("Could not save cemetery: {error}"));
+        }
     }
 }
 
