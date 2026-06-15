@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::Camera;
 use super::drawing;
 use super::interaction;
@@ -9,6 +11,7 @@ use iced::{Background, Border, Color, Element, Length, Point, Renderer, Shadow, 
 
 use crate::models::{Cemetery, GraveId, GraveRectangle, Person, PersonDate, PersonId};
 
+#[derive(Default)]
 pub struct MapEditor {
     cemetery: Cemetery,
     toolbar: Toolbar,
@@ -17,6 +20,7 @@ pub struct MapEditor {
     selected_person: Option<PersonId>,
     person_search: String,
     new_person: NewPersonDraft,
+    person_edits: HashMap<PersonId, PersonEditDraft>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,20 +46,6 @@ pub enum Message {
     UpdatePersonLastName(PersonId, String),
     UpdatePersonDateOfBirth(PersonId, String),
     UpdatePersonDateOfDecease(PersonId, String),
-}
-
-impl Default for MapEditor {
-    fn default() -> Self {
-        Self {
-            cemetery: Cemetery::default(),
-            toolbar: Toolbar::default(),
-            camera: Camera::default(),
-            selected_grave: None,
-            selected_person: None,
-            person_search: String::new(),
-            new_person: NewPersonDraft::default(),
-        }
-    }
 }
 
 impl MapEditor {
@@ -125,6 +115,8 @@ impl MapEditor {
                 self.cemetery.unassign_person_from_grave(person_id);
             }
             Message::UpdatePersonFirstName(id, value) => {
+                self.person_edits.entry(id).or_default().first_name = Some(value.clone());
+
                 if !value.trim().is_empty()
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
@@ -132,6 +124,8 @@ impl MapEditor {
                 }
             }
             Message::UpdatePersonLastName(id, value) => {
+                self.person_edits.entry(id).or_default().last_name = Some(value.clone());
+
                 if !value.trim().is_empty()
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
@@ -139,6 +133,8 @@ impl MapEditor {
                 }
             }
             Message::UpdatePersonDateOfBirth(id, value) => {
+                self.person_edits.entry(id).or_default().date_of_birth = Some(value.clone());
+
                 if let Ok(date) = PersonDate::parse(&value)
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
@@ -146,6 +142,8 @@ impl MapEditor {
                 }
             }
             Message::UpdatePersonDateOfDecease(id, value) => {
+                self.person_edits.entry(id).or_default().date_of_decease = Some(value.clone());
+
                 let date = if value.trim().is_empty() {
                     Some(None)
                 } else {
@@ -379,6 +377,19 @@ impl MapEditor {
 
     fn person_editor(&self, person: &Person) -> Element<'_, Message> {
         let id = person.id();
+        let edits = self.person_edits.get(&id);
+        let first_name = edits
+            .and_then(|edit| edit.first_name.as_deref())
+            .unwrap_or_else(|| person.first_name());
+        let last_name = edits
+            .and_then(|edit| edit.last_name.as_deref())
+            .unwrap_or_else(|| person.last_name());
+        let date_of_birth = edits
+            .and_then(|edit| edit.date_of_birth.as_deref())
+            .unwrap_or_else(|| person.date_of_birth());
+        let date_of_decease = edits
+            .and_then(|edit| edit.date_of_decease.as_deref())
+            .unwrap_or_else(|| person.date_of_decease_text());
 
         let details = column![
             text(person.display_name()).size(16),
@@ -405,16 +416,16 @@ impl MapEditor {
         container(
             column![
                 details,
-                text_input("First name", person.first_name())
+                text_input("First name", first_name)
                     .on_input(move |value| Message::UpdatePersonFirstName(id, value))
                     .padding(7),
-                text_input("Last name", person.last_name())
+                text_input("Last name", last_name)
                     .on_input(move |value| Message::UpdatePersonLastName(id, value))
                     .padding(7),
-                text_input("Date of birth", person.date_of_birth())
+                text_input("Date of birth", date_of_birth)
                     .on_input(move |value| Message::UpdatePersonDateOfBirth(id, value))
                     .padding(7),
-                text_input("Date of decease", person.date_of_decease_text())
+                text_input("Date of decease", date_of_decease)
                     .on_input(move |value| Message::UpdatePersonDateOfDecease(id, value))
                     .padding(7)
             ]
@@ -501,6 +512,14 @@ struct NewPersonDraft {
     date_of_birth: String,
     date_of_decease: String,
     grave_id: Option<GraveId>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PersonEditDraft {
+    first_name: Option<String>,
+    last_name: Option<String>,
+    date_of_birth: Option<String>,
+    date_of_decease: Option<String>,
 }
 
 impl NewPersonDraft {
@@ -650,6 +669,39 @@ mod tests {
         ));
 
         assert!(editor.can_submit_new_person());
+    }
+
+    #[test]
+    fn person_date_edit_preserves_intermediate_text_until_valid() {
+        let mut editor = MapEditor::default();
+        let person_id = create_person(&mut editor, None);
+
+        editor.update(Message::UpdatePersonDateOfBirth(
+            person_id,
+            "10-12-181".to_owned(),
+        ));
+
+        assert_eq!(
+            editor
+                .person_edits
+                .get(&person_id)
+                .and_then(|draft| draft.date_of_birth.as_deref()),
+            Some("10-12-181")
+        );
+        assert_eq!(
+            editor.cemetery.person(person_id).map(Person::date_of_birth),
+            Some("10-12-1815")
+        );
+
+        editor.update(Message::UpdatePersonDateOfBirth(
+            person_id,
+            "10-12-1816".to_owned(),
+        ));
+
+        assert_eq!(
+            editor.cemetery.person(person_id).map(Person::date_of_birth),
+            Some("10-12-1816")
+        );
     }
 
     #[test]

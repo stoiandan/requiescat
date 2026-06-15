@@ -11,7 +11,16 @@ pub struct Cemetery {
 }
 
 impl Cemetery {
-    pub fn from_records(graves: Vec<Grave>, people: Vec<Person>) -> Self {
+    pub fn from_records(graves: Vec<Grave>, mut people: Vec<Person>) -> Self {
+        for person in &mut people {
+            if person
+                .grave_id()
+                .is_some_and(|grave_id| !graves.iter().any(|grave| grave.id() == grave_id))
+            {
+                person.unassign_from_grave();
+            }
+        }
+
         Self {
             map: CemeteryMap::from_graves(graves),
             people: PersonDirectory::from_people(people),
@@ -158,6 +167,25 @@ mod tests {
         assert_eq!(
             cemetery.person(remaining_person).and_then(Person::grave_id),
             Some(remaining_grave)
+        );
+    }
+
+    #[test]
+    fn from_records_removes_dangling_grave_assignments() {
+        let person = Person::from_parts(
+            PersonId::new(1),
+            "Ada".to_owned(),
+            "Lovelace".to_owned(),
+            PersonDate::parse("10-12-1815").unwrap(),
+            None,
+            Some(GraveId::new(99)),
+        );
+
+        let cemetery = Cemetery::from_records(Vec::new(), vec![person]);
+
+        assert_eq!(
+            cemetery.person(PersonId::new(1)).and_then(Person::grave_id),
+            None
         );
     }
 }

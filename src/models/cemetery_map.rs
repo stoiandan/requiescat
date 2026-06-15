@@ -43,6 +43,7 @@ impl CemeteryMap {
     pub fn grave_at(&self, point: iced::Point) -> Option<GraveId> {
         self.graves
             .iter()
+            .rev()
             .find(|grave| grave.contains(point))
             .map(Grave::id)
     }
@@ -101,6 +102,15 @@ mod tests {
         assert_eq!(map.grave_at(Point::new(5.0, 5.0)), Some(first));
         assert_eq!(map.grave_at(Point::new(25.0, 5.0)), Some(second));
         assert_eq!(map.grave_at(Point::new(100.0, 100.0)), None);
+    }
+
+    #[test]
+    fn grave_at_returns_the_topmost_overlapping_grave() {
+        let mut map = CemeteryMap::default();
+        map.add_grave(rectangle_at(0.0, 0.0));
+        let topmost = map.add_grave(rectangle_at(5.0, 5.0));
+
+        assert_eq!(map.grave_at(Point::new(7.0, 7.0)), Some(topmost));
     }
 
     #[test]
