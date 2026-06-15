@@ -1,5 +1,10 @@
 language-name = Română
 language-menu = Limbă
+app-menu-file = Fișier
+app-menu-view = Vizualizare
+app-menu-new-person = Persoană nouă
+app-menu-export-db = Exportă BD
+app-menu-person-directory = Registrul persoanelor
 
 unsaved-changes = Modificări nesalvate
 unknown-window = Fereastră necunoscută
@@ -15,9 +20,8 @@ library-count =
         [few] { $count } cimitire în bibliotecă
        *[other] { $count } de cimitire în bibliotecă
     }
-brand-tagline = Evidența cimitirelor,
-    păstrată cu grijă.
-brand-description = Administrează hărți și înregistrări dintr-o bibliotecă sigură.
+brand-tagline = Evidența cimitirelor
+brand-description = Administrează hărți și înregistrări dintr-o bibliotecă.
 setup-library = Configurează biblioteca
 setup-library-description = Creează un cimitir nou sau importă unul existent.
 welcome-back = Bine ai revenit
@@ -30,11 +34,11 @@ export-named-cemetery = Exportă { $name }
 create-cemetery = Creează cimitirul
 create-cemetery-description = Introdu un nume pentru cimitir.
 cemetery-name = Numele cimitirului
-back-to-menu = Înapoi la meniu
+back-to-menu = Înapoi
 cemetery-library = Biblioteca cimitirelor
-choose-cemetery = Alege un cimitir pentru a-l deschide
+choose-cemetery = Deschide cimitir
 no-cemeteries = Niciun cimitir
-no-cemeteries-description = Importă o bază de date pentru a o adăuga în bibliotecă.
+no-cemeteries-description = Importă bază de date.
 sqlite-cemetery = Cimitir SQLite
 open = Deschide
 
@@ -55,7 +59,7 @@ no-persons-associated = Nicio persoană asociată
 persons = Persoane
 search-people = Caută după nume sau dată
 go-to-grave = Mergi la mormânt
-unassign = Elimină asocierea
+unassign = Dezasociază
 assign = Asociază
 born = Născut(ă) la { $date }
 
@@ -71,7 +75,7 @@ could-not-export-cemetery = Cimitirul nu a putut fi exportat: { $error }
 could-not-refresh-cemeteries = Lista cimitirelor nu a putut fi actualizată: { $error }
 save-failed = Salvarea a eșuat: { $error }
 
-software-updates = Actualizări software
+software-updates = Actualizări
 checking-for-updates = Se caută actualizări…
 application-up-to-date = Requiescat { $version } este actualizat.
 check-again = Verifică din nou

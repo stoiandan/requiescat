@@ -1,5 +1,10 @@
 language-name = English
 language-menu = Language
+app-menu-file = File
+app-menu-view = View
+app-menu-new-person = New person
+app-menu-export-db = Export DB
+app-menu-person-directory = Person directory
 
 unsaved-changes = Unsaved changes
 unknown-window = Unknown window

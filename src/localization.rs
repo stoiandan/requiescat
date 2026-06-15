@@ -155,6 +155,11 @@ fn save_preferred_language(language: Language) {
 pub enum MessageId {
     UnsavedChanges,
     LanguageMenu,
+    AppMenuFile,
+    AppMenuView,
+    AppMenuNewPerson,
+    AppMenuExportDb,
+    AppMenuPersonDirectory,
     UnknownWindow,
     PersonDirectoryTitle,
     NewPersonTitle,
@@ -233,6 +238,11 @@ impl MessageId {
         match self {
             Self::UnsavedChanges => "unsaved-changes",
             Self::LanguageMenu => "language-menu",
+            Self::AppMenuFile => "app-menu-file",
+            Self::AppMenuView => "app-menu-view",
+            Self::AppMenuNewPerson => "app-menu-new-person",
+            Self::AppMenuExportDb => "app-menu-export-db",
+            Self::AppMenuPersonDirectory => "app-menu-person-directory",
             Self::UnknownWindow => "unknown-window",
             Self::PersonDirectoryTitle => "person-directory-title",
             Self::NewPersonTitle => "new-person-title",

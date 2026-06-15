@@ -8,8 +8,11 @@ mod updater;
 
 use std::path::PathBuf;
 
-use iced::widget::{column, container, pick_list, row, text};
-use iced::{Element, Length, Size, Subscription, Task, keyboard, window};
+use iced::widget::{Space, button, column, container, pick_list, row, text};
+use iced::{
+    Background, Border, Color, Element, Length, Shadow, Size, Subscription, Task, Theme, Vector,
+    keyboard, window,
+};
 use localization::{Language, Localizer, MessageId};
 use persistence::{CemeteryFile, CemeteryLibrary, CemeteryRepository, SqliteCemeteryRepository};
 use screens::{
@@ -45,6 +48,9 @@ enum Message {
     WindowClosed(window::Id),
     Keyboard(keyboard::Event),
     LanguageSelected(Language),
+    NewPerson,
+    OpenPersonDirectory,
+    ExportActiveCemetery,
     StartMenu(StartMenuMessage),
     ImportPathChosen(Option<PathBuf>),
     ExportPathChosen(Option<PathBuf>),
@@ -285,6 +291,21 @@ impl Requiescat {
             Message::LanguageSelected(language) => {
                 self.localizer.set_language(language);
             }
+            Message::NewPerson => {
+                if self.main_screen == MainScreen::MapEditor {
+                    return self.open_new_person_dialog();
+                }
+            }
+            Message::OpenPersonDirectory => {
+                if self.main_screen == MainScreen::MapEditor {
+                    return self.open_person_directory();
+                }
+            }
+            Message::ExportActiveCemetery => {
+                if self.main_screen == MainScreen::MapEditor {
+                    return self.choose_export_path();
+                }
+            }
             Message::StartMenu(message) => {
                 return self.update_start_menu(message);
             }
@@ -393,7 +414,7 @@ impl Requiescat {
                 .into()
         };
 
-        self.with_language_menu(content)
+        self.with_global_menu(content, Some(window) == self.main_window)
     }
 
     fn title(&self, window: window::Id) -> String {
@@ -419,7 +440,11 @@ impl Requiescat {
         }
     }
 
-    fn with_language_menu<'a>(&'a self, content: Element<'a, Message>) -> Element<'a, Message> {
+    fn with_global_menu<'a>(
+        &'a self,
+        content: Element<'a, Message>,
+        is_main_window: bool,
+    ) -> Element<'a, Message> {
         let language_menu = row![
             text(self.localizer.text(MessageId::LanguageMenu)).size(12),
             pick_list(
@@ -433,14 +458,73 @@ impl Requiescat {
         .spacing(8)
         .align_y(iced::Alignment::Center);
 
+        let mut menu_bar = row![].spacing(16).align_y(iced::Alignment::Center);
+
+        if is_main_window && self.main_screen == MainScreen::MapEditor {
+            menu_bar = menu_bar.push(self.app_menu_group(
+                self.localizer.text(MessageId::AppMenuFile),
+                [
+                    (
+                        self.localizer.text(MessageId::AppMenuNewPerson),
+                        Message::NewPerson,
+                    ),
+                    (
+                        self.localizer.text(MessageId::AppMenuExportDb),
+                        Message::ExportActiveCemetery,
+                    ),
+                ],
+            ));
+            menu_bar = menu_bar.push(self.app_menu_group(
+                self.localizer.text(MessageId::AppMenuView),
+                [(
+                    self.localizer.text(MessageId::AppMenuPersonDirectory),
+                    Message::OpenPersonDirectory,
+                )],
+            ));
+        }
+
+        menu_bar = menu_bar
+            .push(Space::new().width(Length::Fill))
+            .push(container(language_menu).align_x(iced::Alignment::End));
+
         column![
-            container(language_menu)
+            container(menu_bar)
                 .width(Length::Fill)
-                .align_x(iced::Alignment::End)
-                .padding([6, 10]),
+                .padding([8, 12])
+                .style(app_menu_bar),
             container(content).width(Length::Fill).height(Length::Fill),
         ]
         .into()
+    }
+
+    fn app_menu_group<'a, const N: usize>(
+        &'a self,
+        label: String,
+        actions: [(String, Message); N],
+    ) -> Element<'a, Message> {
+        let mut group = row![
+            container(text(label).size(12).style(|_| text::Style {
+                color: Some(Color::from_rgb8(171, 215, 213)),
+            }))
+            .padding([0, 4])
+            .align_y(iced::Alignment::Center)
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center);
+
+        for (label, message) in actions {
+            group = group.push(
+                button(text(label).size(12))
+                    .padding([5, 10])
+                    .style(app_menu_button)
+                    .on_press(message),
+            );
+        }
+
+        container(group)
+            .padding([3, 4])
+            .style(app_menu_group)
+            .into()
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -550,26 +634,7 @@ impl Requiescat {
                 );
             }
             StartMenuMessage::ExportSelected => {
-                let file_name = self
-                    .selected_cemetery
-                    .as_deref()
-                    .and_then(|path| path.file_name())
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("Cemetery.sqlite")
-                    .to_owned();
-
-                let filter = self.localizer.text(MessageId::FileFilterSqliteCemetery);
-                return Task::perform(
-                    async move {
-                        rfd::AsyncFileDialog::new()
-                            .add_filter(&filter, &["sqlite"])
-                            .set_file_name(&file_name)
-                            .save_file()
-                            .await
-                            .map(|file| file.path().to_owned())
-                    },
-                    Message::ExportPathChosen,
-                );
+                return self.choose_export_path();
             }
             StartMenuMessage::CheckForUpdates => {
                 self.update_state = UpdateState::Checking;
@@ -695,6 +760,29 @@ impl Requiescat {
         };
     }
 
+    fn choose_export_path(&self) -> Task<Message> {
+        let file_name = self
+            .selected_cemetery
+            .as_deref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("Cemetery.sqlite")
+            .to_owned();
+
+        let filter = self.localizer.text(MessageId::FileFilterSqliteCemetery);
+        Task::perform(
+            async move {
+                rfd::AsyncFileDialog::new()
+                    .add_filter(&filter, &["sqlite"])
+                    .set_file_name(&file_name)
+                    .save_file()
+                    .await
+                    .map(|file| file.path().to_owned())
+            },
+            Message::ExportPathChosen,
+        )
+    }
+
     fn refresh_cemeteries(&mut self) {
         let Some(library) = &self.library else {
             return;
@@ -746,4 +834,64 @@ fn is_command_shortcut(event: &keyboard::Event, character: char) -> bool {
     };
 
     !repeat && modifiers.command() && key.to_latin(*physical_key) == Some(character)
+}
+
+fn app_menu_bar(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb8(8, 31, 34))),
+        border: Border {
+            color: Color::from_rgb8(38, 118, 121),
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn app_menu_group(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb8(13, 48, 52))),
+        border: Border {
+            color: Color::from_rgb8(39, 126, 130),
+            width: 1.0,
+            radius: 7.0.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba8(0, 0, 0, 0.25),
+            offset: Vector::new(0.0, 1.0),
+            blur_radius: 3.0,
+        },
+        ..Default::default()
+    }
+}
+
+fn app_menu_button(_: &Theme, status: button::Status) -> button::Style {
+    let pressed = status == button::Status::Pressed;
+    let hovered = status == button::Status::Hovered;
+
+    button::Style {
+        background: Some(Background::Color(if pressed {
+            Color::from_rgb8(34, 125, 128)
+        } else if hovered {
+            Color::from_rgb8(42, 146, 150)
+        } else {
+            Color::from_rgb8(21, 78, 82)
+        })),
+        text_color: Color::WHITE,
+        border: Border {
+            color: Color::from_rgb8(67, 174, 177),
+            width: 1.0,
+            radius: 5.0.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba8(0, 0, 0, 0.18),
+            offset: if pressed {
+                Vector::new(0.0, 0.5)
+            } else {
+                Vector::new(0.0, 1.0)
+            },
+            blur_radius: 2.0,
+        },
+        ..Default::default()
+    }
 }
