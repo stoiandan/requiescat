@@ -232,9 +232,13 @@ fn platform_key() -> &'static str {
     {
         "windows-x86_64"
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        "macos-universal"
+        "macos-aarch64"
+    }
+    #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+    {
+        "macos-unsupported"
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {

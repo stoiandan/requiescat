@@ -7,8 +7,9 @@
 3. Create and push a matching `vX.Y.Z` tag.
 
 The desktop workflow rejects tags that do not match `Cargo.toml`. A successful
-tag build publishes all platform archives, `release-manifest.json`, SHA-256
-checksums inside that manifest, and GitHub build-provenance attestations.
+tag build publishes Windows x86-64, macOS Apple Silicon, and Linux x86-64
+archives, `release-manifest.json`, SHA-256 checksums inside that manifest, and
+GitHub build-provenance attestations.
 
 The app checks:
 
