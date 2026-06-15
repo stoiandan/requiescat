@@ -248,6 +248,7 @@ jobs:
           flatpak-builder \
             --force-clean \
             --user \
+            --default-branch=stable \
             --repo=flatpak-repo \
             flatpak-build \
             packaging/linux/app.requiescat.yml
