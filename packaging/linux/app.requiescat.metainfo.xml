@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>app.requiescat</id>
+  <id>app.requiescat.org</id>
   <name>Requiescat</name>
   <summary>Cemetery records and maps</summary>
   <metadata_license>CC0-1.0</metadata_license>

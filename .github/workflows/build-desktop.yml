@@ -253,7 +253,7 @@ jobs:
           flatpak build-bundle \
             flatpak-repo \
             requiescat-linux-x86_64.flatpak \
-            app.requiescat \
+            app.requiescat.org \
             stable
 
       - name: Upload Linux package
