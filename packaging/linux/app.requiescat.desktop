@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Requiescat
+Comment=Cemetery records and maps
+Exec=requiescat
+Icon=app.requiescat
+Terminal=false
+Categories=Office;Database;

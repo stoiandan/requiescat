@@ -19,6 +19,17 @@ use screens::{
 use updater::{AvailableUpdate, StagedUpdate};
 
 fn main() -> iced::Result {
+    if let Some(result) = updater::run_installer_mode() {
+        if let Err(error) = result {
+            updater::record_installer_failure(&error);
+            eprintln!("Update installation failed: {error}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    updater::remove_stale_helper();
+
     iced::daemon(Requiescat::boot, Requiescat::update, Requiescat::view)
         .title(Requiescat::title)
         .subscription(Requiescat::subscription)
@@ -63,26 +74,27 @@ enum UpdateState {
     UpToDate,
     Available(AvailableUpdate),
     Downloading(AvailableUpdate),
-    Ready {
-        update: StagedUpdate,
-        notes_url: String,
-    },
+    Ready(StagedUpdate),
     Failed(String),
 }
 
 impl UpdateState {
-    fn view(&self) -> UpdateStatusView<'_> {
+    fn view(&self, language: Language) -> UpdateStatusView<'_> {
+        let language_code = language.code();
         match self {
             Self::Checking => UpdateStatusView::Checking,
             Self::UpToDate => UpdateStatusView::UpToDate,
             Self::Available(update) => UpdateStatusView::Available {
                 version: &update.version,
+                description: update.description(language_code),
             },
             Self::Downloading(update) => UpdateStatusView::Downloading {
                 version: &update.version,
+                description: update.description(language_code),
             },
-            Self::Ready { update, .. } => UpdateStatusView::Ready {
+            Self::Ready(update) => UpdateStatusView::Ready {
                 version: &update.version,
+                description: update.description(language_code),
             },
             Self::Failed(error) => UpdateStatusView::Failed(error),
         }
@@ -321,12 +333,8 @@ impl Requiescat {
                 };
             }
             Message::UpdateDownloaded(result) => {
-                let notes_url = match &self.update_state {
-                    UpdateState::Downloading(update) => update.notes_url.clone(),
-                    _ => String::new(),
-                };
                 self.update_state = match result {
-                    Ok(update) => UpdateState::Ready { update, notes_url },
+                    Ok(update) => UpdateState::Ready(update),
                     Err(error) => UpdateState::Failed(error),
                 };
             }
@@ -368,7 +376,7 @@ impl Requiescat {
                         show_create_cemetery: self.show_create_cemetery,
                         new_cemetery_name: &self.new_cemetery_name,
                         status,
-                        update_status: self.update_state.view(),
+                        update_status: self.update_state.view(self.localizer.language()),
                     },
                 )
                 .map(Message::StartMenu),
@@ -578,7 +586,7 @@ impl Requiescat {
                 });
             }
             StartMenuMessage::InstallUpdate => {
-                let UpdateState::Ready { update, .. } = &self.update_state else {
+                let UpdateState::Ready(update) = &self.update_state else {
                     return Task::none();
                 };
                 match updater::install_and_restart(update) {
@@ -591,7 +599,7 @@ impl Requiescat {
                     UpdateState::Available(update) | UpdateState::Downloading(update) => {
                         Some(update.notes_url.as_str())
                     }
-                    UpdateState::Ready { notes_url, .. } => Some(notes_url.as_str()),
+                    UpdateState::Ready(update) => Some(update.notes_url.as_str()),
                     _ => None,
                 };
                 if let Some(notes_url) = notes_url

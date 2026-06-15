@@ -1,0 +1,64 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Requiescat"
+    Manufacturer="Requiescat"
+    Version="$(var.Version)"
+    UpgradeCode="E08A1EDD-F722-4716-8091-FF2B1C632ACC"
+    Scope="perMachine">
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of Requiescat is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="REQUIESCAT_LAUNCH" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Requiescat">
+        <Component Id="ApplicationFiles" Guid="54BFA258-76FC-4921-84E3-52126BC73920" Bitness="always64">
+          <File Id="RequiescatExe" Source="$(var.BinDir)\requiescat.exe" />
+          <File Id="UpdaterExe" Source="$(var.BinDir)\requiescat-updater.exe" />
+          <File Id="LicenseFile" Source="$(var.SourceDir)\LICENSE" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuDirectory" Name="Requiescat">
+        <Component Id="ProgramMenuShortcut" Guid="07CDA868-6FB8-45C0-86CF-E6A2A9993940">
+          <Shortcut
+            Id="RequiescatShortcut"
+            Name="Requiescat"
+            Description="Cemetery records and maps"
+            Target="[INSTALLFOLDER]requiescat-updater.exe"
+            WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveProgramMenuDirectory" On="uninstall" />
+          <RegistryValue
+            Root="HKLM"
+            Key="Software\Requiescat"
+            Name="Installed"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature">
+      <ComponentRef Id="ApplicationFiles" />
+      <ComponentRef Id="ProgramMenuShortcut" />
+    </Feature>
+
+    <CustomAction
+      Id="LaunchApplication"
+      FileRef="UpdaterExe"
+      ExeCommand="--launch-app"
+      Execute="immediate"
+      Return="asyncNoWait"
+      Impersonate="yes" />
+    <InstallExecuteSequence>
+      <Custom
+        Action="LaunchApplication"
+        After="InstallFinalize"
+        Condition="REQUIESCAT_LAUNCH = 1 AND NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

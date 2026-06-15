@@ -1,35 +1,59 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::fs;
-use std::fs::OpenOptions;
+use std::fs::{self, File, OpenOptions};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
+use flate2::read::GzDecoder;
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use sysinfo::{Pid, ProcessesToUpdate, System};
+use tar::Archive;
+#[cfg(not(target_os = "macos"))]
+use zip::ZipArchive;
 
 const DEFAULT_MANIFEST_URL: &str =
     "https://github.com/stoiandan/requiescat/releases/latest/download/release-manifest.json";
+const INSTALL_MODE_ARGUMENT: &str = "--install-update";
 
 #[derive(Debug, Clone)]
 pub struct AvailableUpdate {
     pub version: String,
     pub notes_url: String,
+    descriptions: HashMap<String, String>,
     asset: ReleaseAsset,
+}
+
+impl AvailableUpdate {
+    pub fn description(&self, language_code: &str) -> &str {
+        localized_description(&self.descriptions, language_code)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct StagedUpdate {
     pub version: String,
+    pub notes_url: String,
+    descriptions: HashMap<String, String>,
     archive: PathBuf,
     format: ArchiveFormat,
+}
+
+impl StagedUpdate {
+    pub fn description(&self, language_code: &str) -> &str {
+        localized_description(&self.descriptions, language_code)
+    }
 }
 
 #[derive(Debug)]
 pub enum UpdateError {
     Http(reqwest::Error),
-    Io(std::io::Error),
+    Io(io::Error),
+    Archive(String),
     InvalidManifest(String),
     UnsupportedPlatform,
     ChecksumMismatch,
@@ -40,7 +64,7 @@ impl fmt::Display for UpdateError {
         match self {
             Self::Http(error) => write!(formatter, "{error}"),
             Self::Io(error) => write!(formatter, "{error}"),
-            Self::InvalidManifest(message) => formatter.write_str(message),
+            Self::Archive(message) | Self::InvalidManifest(message) => formatter.write_str(message),
             Self::UnsupportedPlatform => {
                 formatter.write_str("No update package is available for this platform.")
             }
@@ -57,8 +81,8 @@ impl From<reqwest::Error> for UpdateError {
     }
 }
 
-impl From<std::io::Error> for UpdateError {
-    fn from(error: std::io::Error) -> Self {
+impl From<io::Error> for UpdateError {
+    fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
 }
@@ -67,6 +91,7 @@ impl From<std::io::Error> for UpdateError {
 struct ReleaseManifest {
     version: String,
     notes_url: String,
+    descriptions: HashMap<String, String>,
     assets: HashMap<String, ReleaseAsset>,
 }
 
@@ -83,6 +108,38 @@ struct ReleaseAsset {
 enum ArchiveFormat {
     Zip,
     TarGz,
+    Msi,
+    Flatpak,
+}
+
+impl ArchiveFormat {
+    fn as_argument(self) -> &'static str {
+        match self {
+            Self::Zip => "zip",
+            Self::TarGz => "tar-gz",
+            Self::Msi => "msi",
+            Self::Flatpak => "flatpak",
+        }
+    }
+
+    fn from_argument(value: &str) -> Result<Self, UpdateError> {
+        match value {
+            "zip" => Ok(Self::Zip),
+            "tar-gz" => Ok(Self::TarGz),
+            "msi" => Ok(Self::Msi),
+            "flatpak" => Ok(Self::Flatpak),
+            _ => Err(UpdateError::InvalidManifest(format!(
+                "Unsupported update archive format: {value}"
+            ))),
+        }
+    }
+}
+
+struct InstallRequest {
+    archive: PathBuf,
+    target: PathBuf,
+    format: ArchiveFormat,
+    parent_pid: u32,
 }
 
 pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> {
@@ -104,6 +161,7 @@ pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> 
     if available_version <= current_version {
         return Ok(None);
     }
+    validate_descriptions(&manifest.descriptions)?;
 
     let asset = manifest
         .assets
@@ -114,6 +172,7 @@ pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> 
     Ok(Some(AvailableUpdate {
         version: available_version.to_string(),
         notes_url: manifest.notes_url,
+        descriptions: manifest.descriptions,
         asset,
     }))
 }
@@ -144,9 +203,36 @@ pub async fn download_update(update: AvailableUpdate) -> Result<StagedUpdate, Up
 
     Ok(StagedUpdate {
         version: update.version,
+        notes_url: update.notes_url,
+        descriptions: update.descriptions,
         archive,
         format: update.asset.format,
     })
+}
+
+fn validate_descriptions(descriptions: &HashMap<String, String>) -> Result<(), UpdateError> {
+    for language in ["en", "ro"] {
+        if descriptions
+            .get(language)
+            .is_none_or(|description| description.trim().is_empty())
+        {
+            return Err(UpdateError::InvalidManifest(format!(
+                "The release description for {language} is missing."
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn localized_description<'a>(
+    descriptions: &'a HashMap<String, String>,
+    language_code: &str,
+) -> &'a str {
+    descriptions
+        .get(language_code)
+        .or_else(|| descriptions.get("en"))
+        .map(String::as_str)
+        .unwrap_or_default()
 }
 
 pub fn open_release_notes(url: &str) -> Result<(), UpdateError> {
@@ -179,33 +265,342 @@ pub fn open_release_notes(url: &str) -> Result<(), UpdateError> {
 }
 
 pub fn install_and_restart(update: &StagedUpdate) -> Result<(), UpdateError> {
-    let executable = std::env::current_exe()?;
-    let script_directory = crate::persistence::application_data_directory()?.join("updates");
-    fs::create_dir_all(&script_directory)?;
-
     #[cfg(target_os = "windows")]
-    {
-        ensure_installation_writable(&executable)?;
-        install_windows(update, &executable, &script_directory)?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let app_bundle = macos_app_bundle(&executable)?;
-        ensure_installation_writable(app_bundle)?;
-        install_macos(update, app_bundle, &script_directory)?;
+    if matches!(update.format, ArchiveFormat::Msi) {
+        let executable = std::env::current_exe()?;
+        let updater = executable
+            .parent()
+            .ok_or_else(|| {
+                UpdateError::InvalidManifest(
+                    "The Windows installation directory is unavailable.".to_owned(),
+                )
+            })?
+            .join("requiescat-updater.exe");
+        Command::new(updater)
+            .arg("--install-msi")
+            .arg(&update.archive)
+            .spawn()?;
+        return Ok(());
     }
 
     #[cfg(target_os = "linux")]
+    if matches!(update.format, ArchiveFormat::Flatpak) {
+        Command::new("xdg-open").arg(&update.archive).spawn()?;
+        return Ok(());
+    }
+
+    let executable = std::env::current_exe()?;
+    let target = installation_target(&executable)?;
+    ensure_installation_writable(&target)?;
+
+    let helper = helper_path()?;
+    if helper.exists() {
+        fs::remove_file(&helper)?;
+    }
+    fs::copy(&executable, &helper)?;
+
+    let mut command = Command::new(&helper);
+    command
+        .arg(INSTALL_MODE_ARGUMENT)
+        .arg(&update.archive)
+        .arg(&target)
+        .arg(update.format.as_argument())
+        .arg(std::process::id().to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(target_os = "windows")]
     {
-        ensure_installation_writable(&executable)?;
-        install_linux(update, &executable, &script_directory)?;
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0000_0008 | 0x0800_0000);
+    }
+
+    command.spawn()?;
+    Ok(())
+}
+
+pub fn run_installer_mode() -> Option<Result<(), UpdateError>> {
+    let mut arguments = std::env::args_os();
+    let _executable = arguments.next();
+    if arguments.next().as_deref() != Some(INSTALL_MODE_ARGUMENT.as_ref()) {
+        return None;
+    }
+
+    Some(parse_install_request(arguments.collect()).and_then(install_update))
+}
+
+pub fn remove_stale_helper() {
+    let Ok(helper) = helper_path() else {
+        return;
+    };
+    if helper != std::env::current_exe().unwrap_or_default() {
+        let _ = fs::remove_file(helper);
+    }
+}
+
+pub fn record_installer_failure(error: &UpdateError) {
+    let Ok(directory) = crate::persistence::application_data_directory() else {
+        return;
+    };
+    let directory = directory.join("updates");
+    if fs::create_dir_all(&directory).is_ok() {
+        let _ = fs::write(
+            directory.join("last-install-error.txt"),
+            format!("{error}\n"),
+        );
+    }
+}
+
+fn parse_install_request(
+    arguments: Vec<std::ffi::OsString>,
+) -> Result<InstallRequest, UpdateError> {
+    let [archive, target, format, parent_pid]: [std::ffi::OsString; 4] =
+        arguments.try_into().map_err(|arguments: Vec<_>| {
+            UpdateError::InvalidManifest(format!(
+                "Expected four update installer arguments, received {}.",
+                arguments.len()
+            ))
+        })?;
+    let format = format
+        .into_string()
+        .map_err(|_| UpdateError::InvalidManifest("Invalid archive format argument.".to_owned()))?;
+    let parent_pid = parent_pid
+        .into_string()
+        .map_err(|_| UpdateError::InvalidManifest("Invalid parent process ID.".to_owned()))?
+        .parse()
+        .map_err(|_| UpdateError::InvalidManifest("Invalid parent process ID.".to_owned()))?;
+
+    Ok(InstallRequest {
+        archive: archive.into(),
+        target: target.into(),
+        format: ArchiveFormat::from_argument(&format)?,
+        parent_pid,
+    })
+}
+
+fn install_update(request: InstallRequest) -> Result<(), UpdateError> {
+    wait_for_process_exit(request.parent_pid);
+
+    let staging = std::env::temp_dir().join(format!(
+        "requiescat-update-{}-{}",
+        request.parent_pid,
+        std::process::id()
+    ));
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
+    fs::create_dir_all(&staging)?;
+
+    let result = (|| {
+        extract_archive(&request.archive, request.format, &staging)?;
+        replace_installation(&staging, &request.target)?;
+        restart_application(&request.target)
+    })();
+
+    let _ = fs::remove_dir_all(staging);
+    let _ = fs::remove_file(request.archive);
+    result
+}
+
+fn wait_for_process_exit(process_id: u32) {
+    let mut system = System::new();
+    let pid = Pid::from_u32(process_id);
+    loop {
+        system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        if system.process(pid).is_none() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+}
+
+fn extract_archive(
+    archive: &Path,
+    format: ArchiveFormat,
+    destination: &Path,
+) -> Result<(), UpdateError> {
+    match format {
+        ArchiveFormat::Zip => extract_zip(archive, destination),
+        ArchiveFormat::TarGz => extract_tar_gz(archive, destination),
+        ArchiveFormat::Msi | ArchiveFormat::Flatpak => Err(UpdateError::Archive(
+            "This package format is installed by the operating system.".to_owned(),
+        )),
+    }
+}
+
+fn extract_zip(archive: &Path, destination: &Path) -> Result<(), UpdateError> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("/usr/bin/ditto")
+            .args(["-x", "-k"])
+            .arg(archive)
+            .arg(destination)
+            .status()?;
+        if !status.success() {
+            return Err(UpdateError::Archive(format!(
+                "ditto failed to extract the update archive with status {status}."
+            )));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let file = File::open(archive)?;
+        let mut archive =
+            ZipArchive::new(file).map_err(|error| UpdateError::Archive(error.to_string()))?;
+
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|error| UpdateError::Archive(error.to_string()))?;
+            let Some(relative_path) = entry.enclosed_name() else {
+                return Err(UpdateError::Archive(
+                    "The update archive contains an unsafe path.".to_owned(),
+                ));
+            };
+            let output = destination.join(relative_path);
+
+            if entry.is_dir() {
+                fs::create_dir_all(&output)?;
+                continue;
+            }
+
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut output_file = File::create(&output)?;
+            io::copy(&mut entry, &mut output_file)?;
+
+            #[cfg(unix)]
+            if let Some(mode) = entry.unix_mode() {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&output, fs::Permissions::from_mode(mode))?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn extract_tar_gz(archive: &Path, destination: &Path) -> Result<(), UpdateError> {
+    let file = File::open(archive)?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = Archive::new(decoder);
+    archive.unpack(destination)?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn replace_installation(staging: &Path, target: &Path) -> Result<(), UpdateError> {
+    let replacement = staging.join("requiescat").join("requiescat.exe");
+    replace_file(&replacement, target)
+}
+
+#[cfg(target_os = "linux")]
+fn replace_installation(staging: &Path, target: &Path) -> Result<(), UpdateError> {
+    let replacement = staging.join("requiescat").join("requiescat");
+    replace_file(&replacement, target)
+}
+
+#[cfg(target_os = "macos")]
+fn replace_installation(staging: &Path, target: &Path) -> Result<(), UpdateError> {
+    let replacement = staging.join("Requiescat.app");
+    let previous = target.with_extension("app.previous");
+
+    if previous.exists() {
+        fs::remove_dir_all(&previous)?;
+    }
+    fs::rename(target, &previous)?;
+    match fs::rename(&replacement, target) {
+        Ok(()) => {
+            fs::remove_dir_all(previous)?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::rename(&previous, target);
+            Err(error.into())
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn replace_file(replacement: &Path, target: &Path) -> Result<(), UpdateError> {
+    let next = target.with_extension("new");
+    fs::copy(replacement, &next)?;
+
+    let permissions = fs::metadata(replacement)?.permissions();
+    fs::set_permissions(&next, permissions)?;
+
+    fs::rename(next, target)?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn replace_file(replacement: &Path, target: &Path) -> Result<(), UpdateError> {
+    let next = target.with_extension("new");
+    let previous = target.with_extension("previous");
+    fs::copy(replacement, &next)?;
+
+    if previous.exists() {
+        fs::remove_file(&previous)?;
+    }
+    fs::rename(target, &previous)?;
+    match fs::rename(&next, target) {
+        Ok(()) => {
+            fs::remove_file(previous)?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::rename(&previous, target);
+            Err(error.into())
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn restart_application(target: &Path) -> Result<(), UpdateError> {
+    Command::new("open").arg(target).spawn()?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn restart_application(target: &Path) -> Result<(), UpdateError> {
+    Command::new(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+fn installation_target(executable: &Path) -> Result<PathBuf, UpdateError> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_app_bundle(executable).map(Path::to_owned)
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    {
+        Ok(executable.to_owned())
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    return Err(UpdateError::UnsupportedPlatform);
+    {
+        let _ = executable;
+        Err(UpdateError::UnsupportedPlatform)
+    }
+}
 
-    Ok(())
+fn helper_path() -> Result<PathBuf, UpdateError> {
+    let directory = crate::persistence::application_data_directory()?.join("updates");
+    fs::create_dir_all(&directory)?;
+    Ok(directory.join(if cfg!(target_os = "windows") {
+        "requiescat-updater.exe"
+    } else {
+        "requiescat-updater"
+    }))
 }
 
 fn ensure_installation_writable(target: &Path) -> Result<(), UpdateError> {
@@ -230,7 +625,7 @@ fn parse_version(value: &str) -> Result<Version, UpdateError> {
 fn platform_key() -> &'static str {
     #[cfg(target_os = "windows")]
     {
-        "windows-x86_64"
+        "windows-msi-x86_64"
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
@@ -242,7 +637,7 @@ fn platform_key() -> &'static str {
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        "linux-x86_64"
+        "linux-flatpak-x86_64"
     }
     #[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
     {
@@ -252,133 +647,6 @@ fn platform_key() -> &'static str {
     {
         "unsupported"
     }
-}
-
-#[cfg(target_os = "windows")]
-fn install_windows(
-    update: &StagedUpdate,
-    executable: &Path,
-    directory: &Path,
-) -> Result<(), UpdateError> {
-    if !matches!(update.format, ArchiveFormat::Zip) {
-        return Err(UpdateError::InvalidManifest(
-            "Windows updates must use ZIP archives.".to_owned(),
-        ));
-    }
-
-    let script = directory.join("install-update.ps1");
-    fs::write(
-        &script,
-        r#"param([string]$Archive, [string]$Executable, [int]$ParentProcessId)
-$ErrorActionPreference = "Stop"
-while (Get-Process -Id $ParentProcessId -ErrorAction SilentlyContinue) {
-    Start-Sleep -Milliseconds 200
-}
-$staging = Join-Path ([System.IO.Path]::GetTempPath()) ("requiescat-update-" + [guid]::NewGuid())
-New-Item -ItemType Directory -Path $staging | Out-Null
-try {
-    Expand-Archive -LiteralPath $Archive -DestinationPath $staging -Force
-    $replacement = Join-Path $staging "requiescat\requiescat.exe"
-    Copy-Item -LiteralPath $replacement -Destination ($Executable + ".new") -Force
-    Move-Item -LiteralPath ($Executable + ".new") -Destination $Executable -Force
-    Start-Process -FilePath $Executable
-} finally {
-    Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $Archive -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
-}
-"#,
-    )?;
-
-    use std::os::windows::process::CommandExt;
-    Command::new("powershell.exe")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-        .arg(&script)
-        .arg(&update.archive)
-        .arg(executable)
-        .arg(std::process::id().to_string())
-        .creation_flags(0x0000_0008 | 0x0800_0000)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn install_linux(
-    update: &StagedUpdate,
-    executable: &Path,
-    directory: &Path,
-) -> Result<(), UpdateError> {
-    if !matches!(update.format, ArchiveFormat::TarGz) {
-        return Err(UpdateError::InvalidManifest(
-            "Linux updates must use tar.gz archives.".to_owned(),
-        ));
-    }
-
-    let script = directory.join("install-update.sh");
-    write_unix_script(
-        &script,
-        r#"#!/bin/sh
-set -eu
-archive=$1
-executable=$2
-parent_pid=$3
-while kill -0 "$parent_pid" 2>/dev/null; do
-    sleep 1
-done
-staging=$(mktemp -d)
-trap 'rm -rf "$staging"; rm -f "$archive" "$0"' EXIT
-tar -xzf "$archive" -C "$staging"
-cp "$staging/requiescat/requiescat" "$executable.new"
-chmod +x "$executable.new"
-mv -f "$executable.new" "$executable"
-"$executable" >/dev/null 2>&1 &
-"#,
-    )?;
-    spawn_unix_script(&script, &update.archive, executable)
-}
-
-#[cfg(target_os = "macos")]
-fn install_macos(
-    update: &StagedUpdate,
-    app_bundle: &Path,
-    directory: &Path,
-) -> Result<(), UpdateError> {
-    if !matches!(update.format, ArchiveFormat::Zip) {
-        return Err(UpdateError::InvalidManifest(
-            "macOS updates must use ZIP archives.".to_owned(),
-        ));
-    }
-
-    let script = directory.join("install-update.sh");
-    write_unix_script(
-        &script,
-        r#"#!/bin/sh
-set -eu
-archive=$1
-app=$2
-parent_pid=$3
-while kill -0 "$parent_pid" 2>/dev/null; do
-    sleep 1
-done
-staging=$(mktemp -d)
-old_app="$app.previous"
-trap 'rm -rf "$staging"; rm -f "$archive" "$0"' EXIT
-/usr/bin/ditto -x -k "$archive" "$staging"
-rm -rf "$old_app"
-mv "$app" "$old_app"
-if mv "$staging/Requiescat.app" "$app"; then
-    open "$app"
-    rm -rf "$old_app"
-else
-    mv "$old_app" "$app"
-    exit 1
-fi
-"#,
-    )?;
-    spawn_unix_script(&script, &update.archive, app_bundle)
 }
 
 #[cfg(target_os = "macos")]
@@ -391,30 +659,6 @@ fn macos_app_bundle(executable: &Path) -> Result<&Path, UpdateError> {
                 "The running executable is not inside a macOS app bundle.".to_owned(),
             )
         })
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn write_unix_script(path: &Path, contents: &str) -> Result<(), UpdateError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::write(path, contents)?;
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn spawn_unix_script(script: &Path, archive: &Path, target: &Path) -> Result<(), UpdateError> {
-    Command::new(script)
-        .arg(archive)
-        .arg(target)
-        .arg(std::process::id().to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    Ok(())
 }
 
 impl From<crate::persistence::PersistenceError> for UpdateError {
@@ -434,7 +678,35 @@ mod tests {
     }
 
     #[test]
+    fn parses_installer_arguments() {
+        let request = parse_install_request(vec![
+            "update.zip".into(),
+            "Requiescat.app".into(),
+            "zip".into(),
+            "42".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(request.archive, PathBuf::from("update.zip"));
+        assert_eq!(request.target, PathBuf::from("Requiescat.app"));
+        assert!(matches!(request.format, ArchiveFormat::Zip));
+        assert_eq!(request.parent_pid, 42);
+    }
+
+    #[test]
     fn platform_has_a_release_key() {
         assert!(!platform_key().is_empty());
+    }
+
+    #[test]
+    fn localized_description_uses_english_as_fallback() {
+        let descriptions = HashMap::from([
+            ("en".to_owned(), "English notes".to_owned()),
+            ("ro".to_owned(), "Note în română".to_owned()),
+        ]);
+
+        assert_eq!(localized_description(&descriptions, "ro"), "Note în română");
+        assert_eq!(localized_description(&descriptions, "de"), "English notes");
+        assert!(validate_descriptions(&descriptions).is_ok());
     }
 }

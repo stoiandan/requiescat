@@ -2,14 +2,27 @@
 name = "requiescat"
 version = "0.2.0"
 edition = "2024"
+default-run = "requiescat"
+
+[[bin]]
+name = "requiescat"
+path = "src/main.rs"
+
+[[bin]]
+name = "requiescat-updater"
+path = "src/bin/requiescat-updater.rs"
 
 [dependencies]
 fluent-bundle = "0.16.0"
+flate2 = "1.1.5"
 iced = { version = "0.14.0", features = ["canvas"] }
-reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rfd = "0.15.4"
 rusqlite = { version = "0.37.0", features = ["backup", "bundled"] }
 semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
 sha2 = "0.10.9"
+sysinfo = "0.37.2"
+tar = "0.4.44"
 unic-langid = { version = "0.9.6", features = ["macros"] }
+zip = { version = "6.0.0", default-features = false, features = ["deflate"] }

@@ -35,9 +35,18 @@ pub enum Message {
 pub enum UpdateStatusView<'a> {
     Checking,
     UpToDate,
-    Available { version: &'a str },
-    Downloading { version: &'a str },
-    Ready { version: &'a str },
+    Available {
+        version: &'a str,
+        description: &'a str,
+    },
+    Downloading {
+        version: &'a str,
+        description: &'a str,
+    },
+    Ready {
+        version: &'a str,
+        description: &'a str,
+    },
     Failed(&'a str),
 }
 
@@ -194,35 +203,53 @@ fn update_status_view<'a>(
     localizer: &'a Localizer,
     status: UpdateStatusView<'a>,
 ) -> Element<'a, Message> {
-    let (message, primary_action, show_notes) = match status {
-        UpdateStatusView::Checking => (localizer.text(MessageId::CheckingForUpdates), None, false),
+    let (message, description, primary_action, show_notes) = match status {
+        UpdateStatusView::Checking => (
+            localizer.text(MessageId::CheckingForUpdates),
+            None,
+            None,
+            false,
+        ),
         UpdateStatusView::UpToDate => (
             localizer.value(
                 MessageId::ApplicationUpToDate,
                 "version",
                 env!("CARGO_PKG_VERSION"),
             ),
+            None,
             Some((
                 localizer.text(MessageId::CheckAgain),
                 Message::CheckForUpdates,
             )),
             false,
         ),
-        UpdateStatusView::Available { version } => (
+        UpdateStatusView::Available {
+            version,
+            description,
+        } => (
             localizer.value(MessageId::UpdateAvailable, "version", version),
+            Some(description),
             Some((
                 localizer.text(MessageId::DownloadUpdate),
                 Message::DownloadUpdate,
             )),
             true,
         ),
-        UpdateStatusView::Downloading { version } => (
+        UpdateStatusView::Downloading {
+            version,
+            description,
+        } => (
             localizer.value(MessageId::DownloadingUpdate, "version", version),
+            Some(description),
             None,
             true,
         ),
-        UpdateStatusView::Ready { version } => (
+        UpdateStatusView::Ready {
+            version,
+            description,
+        } => (
             localizer.value(MessageId::UpdateReady, "version", version),
+            Some(description),
             Some((
                 localizer.text(MessageId::RestartAndInstall),
                 Message::InstallUpdate,
@@ -231,6 +258,7 @@ fn update_status_view<'a>(
         ),
         UpdateStatusView::Failed(error) => (
             localizer.value(MessageId::UpdateCheckFailed, "error", error),
+            None,
             Some((
                 localizer.text(MessageId::TryAgain),
                 Message::CheckForUpdates,
@@ -257,28 +285,31 @@ fn update_status_view<'a>(
         );
     }
 
-    container(
-        column![
-            text(localizer.text(MessageId::SoftwareUpdates))
-                .size(12)
-                .color(TEXT_PRIMARY),
-            text(message).size(11).color(TEXT_MUTED),
-            actions
-        ]
-        .spacing(7),
-    )
-    .width(Length::Fill)
-    .padding([9, 12])
-    .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgb(0.04, 0.14, 0.145))),
-        border: Border {
-            color: BORDER_COLOR,
-            width: 1.0,
-            radius: 9.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
+    let mut content = column![
+        text(localizer.text(MessageId::SoftwareUpdates))
+            .size(12)
+            .color(TEXT_PRIMARY),
+        text(message).size(11).color(TEXT_MUTED),
+    ]
+    .spacing(7);
+    if let Some(description) = description {
+        content = content.push(text(description).size(11).color(TEXT_MUTED));
+    }
+    content = content.push(actions);
+
+    container(content)
+        .width(Length::Fill)
+        .padding([9, 12])
+        .style(|_| container::Style {
+            background: Some(Background::Color(Color::from_rgb(0.04, 0.14, 0.145))),
+            border: Border {
+                color: BORDER_COLOR,
+                width: 1.0,
+                radius: 9.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 fn create_cemetery_form<'a>(

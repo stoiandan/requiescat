@@ -11,7 +11,7 @@ env:
 
 jobs:
   windows:
-    name: Windows portable app
+    name: Windows MSI
     runs-on: windows-latest
     env:
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
@@ -29,9 +29,49 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build release executable
-        run: cargo build --locked --release
+        run: cargo build --locked --release --bin requiescat --bin requiescat-updater
 
-      - name: Sign Windows executable
+      - name: Sign Windows executables
+        if: env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP "requiescat-signing.pfx"
+          [IO.File]::WriteAllBytes(
+            $certificate,
+            [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          )
+          $signTool = Get-ChildItem `
+            "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName |
+            Select-Object -Last 1
+          foreach ($executable in @(
+            "target/release/requiescat.exe",
+            "target/release/requiescat-updater.exe"
+          )) {
+            & $signTool.FullName sign `
+              /fd SHA256 `
+              /f $certificate `
+              /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+              /tr http://timestamp.digicert.com `
+              /td SHA256 `
+              $executable
+          }
+          Remove-Item $certificate -Force
+
+      - name: Install WiX Toolset
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          wix build packaging/windows/Product.wxs `
+            -arch x64 `
+            -d Version="${env:GITHUB_REF_NAME.TrimStart('v')}" `
+            -d BinDir="target/release" `
+            -d SourceDir="." `
+            -o requiescat-windows-x86_64.msi
+
+      - name: Sign Windows MSI
         if: env.WINDOWS_CERTIFICATE != ''
         shell: pwsh
         run: |
@@ -50,31 +90,21 @@ jobs:
             /p $env:WINDOWS_CERTIFICATE_PASSWORD `
             /tr http://timestamp.digicert.com `
             /td SHA256 `
-            target/release/requiescat.exe
+            requiescat-windows-x86_64.msi
           Remove-Item $certificate -Force
-
-      - name: Package portable executable
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path dist/requiescat
-          Copy-Item target/release/requiescat.exe dist/requiescat/
-          Copy-Item LICENSE dist/requiescat/
-          Compress-Archive `
-            -Path dist/requiescat `
-            -DestinationPath requiescat-windows-x86_64.zip
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v7
         with:
-          name: requiescat-windows-x86_64
-          path: requiescat-windows-x86_64.zip
+          name: requiescat-windows-x86_64-msi
+          path: requiescat-windows-x86_64.msi
           if-no-files-found: error
 
       - name: Attest Windows package
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: requiescat-windows-x86_64.zip
+          subject-path: requiescat-windows-x86_64.msi
 
   macos:
     name: macOS Apple Silicon app
@@ -188,7 +218,7 @@ jobs:
           subject-path: requiescat-macos-aarch64.zip
 
   linux:
-    name: Linux portable app
+    name: Linux Flatpak
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -199,39 +229,45 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
-      - name: Install Linux build dependencies
+      - name: Install Flatpak tooling
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
-            libwayland-dev \
-            libxkbcommon-dev \
-            pkg-config
+            flatpak \
+            flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --noninteractive --user flathub \
+            org.freedesktop.Platform//24.08 \
+            org.freedesktop.Sdk//24.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//24.08
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build release executable
-        run: cargo build --locked --release
-
-      - name: Package portable executable
+      - name: Build Flatpak bundle
         run: |
-          mkdir -p dist/requiescat
-          cp target/release/requiescat dist/requiescat/
-          cp LICENSE dist/requiescat/
-          tar -czf requiescat-linux-x86_64.tar.gz -C dist requiescat
+          flatpak-builder \
+            --force-clean \
+            --user \
+            --repo=flatpak-repo \
+            flatpak-build \
+            packaging/linux/app.requiescat.yml
+          flatpak build-bundle \
+            flatpak-repo \
+            requiescat-linux-x86_64.flatpak \
+            app.requiescat \
+            stable
 
       - name: Upload Linux package
         uses: actions/upload-artifact@v7
         with:
-          name: requiescat-linux-x86_64
-          path: requiescat-linux-x86_64.tar.gz
+          name: requiescat-linux-x86_64-flatpak
+          path: requiescat-linux-x86_64.flatpak
           if-no-files-found: error
 
       - name: Attest Linux package
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: requiescat-linux-x86_64.tar.gz
+          subject-path: requiescat-linux-x86_64.flatpak
 
   release:
     name: Publish GitHub release
@@ -269,14 +305,16 @@ jobs:
         run: |
           cd release-assets
           VERSION="${TAG#v}"
-          WINDOWS_SHA="$(sha256sum requiescat-windows-x86_64.zip | cut -d' ' -f1)"
+          WINDOWS_SHA="$(sha256sum requiescat-windows-x86_64.msi | cut -d' ' -f1)"
           MACOS_SHA="$(sha256sum requiescat-macos-aarch64.zip | cut -d' ' -f1)"
-          LINUX_SHA="$(sha256sum requiescat-linux-x86_64.tar.gz | cut -d' ' -f1)"
+          LINUX_SHA="$(sha256sum requiescat-linux-x86_64.flatpak | cut -d' ' -f1)"
           BASE_URL="https://github.com/${REPOSITORY}/releases/download/${TAG}"
 
           jq -n \
             --arg version "$VERSION" \
             --arg notes_url "https://github.com/${REPOSITORY}/releases/tag/${TAG}" \
+            --rawfile description_en ../packaging/release-notes/en.md \
+            --rawfile description_ro ../packaging/release-notes/ro.md \
             --arg base_url "$BASE_URL" \
             --arg windows_sha "$WINDOWS_SHA" \
             --arg macos_sha "$MACOS_SHA" \
@@ -284,12 +322,16 @@ jobs:
             '{
               version: $version,
               notes_url: $notes_url,
+              descriptions: {
+                en: ($description_en | rtrimstr("\n")),
+                ro: ($description_ro | rtrimstr("\n"))
+              },
               assets: {
-                "windows-x86_64": {
-                  url: ($base_url + "/requiescat-windows-x86_64.zip"),
+                "windows-msi-x86_64": {
+                  url: ($base_url + "/requiescat-windows-x86_64.msi"),
                   sha256: $windows_sha,
-                  file_name: "requiescat-windows-x86_64.zip",
-                  format: "zip"
+                  file_name: "requiescat-windows-x86_64.msi",
+                  format: "msi"
                 },
                 "macos-aarch64": {
                   url: ($base_url + "/requiescat-macos-aarch64.zip"),
@@ -297,11 +339,11 @@ jobs:
                   file_name: "requiescat-macos-aarch64.zip",
                   format: "zip"
                 },
-                "linux-x86_64": {
-                  url: ($base_url + "/requiescat-linux-x86_64.tar.gz"),
+                "linux-flatpak-x86_64": {
+                  url: ($base_url + "/requiescat-linux-x86_64.flatpak"),
                   sha256: $linux_sha,
-                  file_name: "requiescat-linux-x86_64.tar.gz",
-                  format: "tar-gz"
+                  file_name: "requiescat-linux-x86_64.flatpak",
+                  format: "flatpak"
                 }
               }
             }' > release-manifest.json

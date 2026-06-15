@@ -32,7 +32,7 @@ impl Language {
         }
     }
 
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             Self::English => "en",
             Self::Romanian => "ro",

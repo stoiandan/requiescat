@@ -1,0 +1,29 @@
+app-id: app.requiescat
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: requiescat
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+modules:
+  - name: requiescat
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      build-args:
+        - --share=network
+    build-commands:
+      - cargo build --locked --release --bin requiescat
+      - install -Dm755 target/release/requiescat /app/bin/requiescat
+      - install -Dm644 packaging/linux/app.requiescat.desktop /app/share/applications/app.requiescat.desktop
+      - install -Dm644 packaging/linux/app.requiescat.metainfo.xml /app/share/metainfo/app.requiescat.metainfo.xml
+      - install -Dm644 packaging/icons/requiescat.svg /app/share/icons/hicolor/scalable/apps/app.requiescat.svg
+    sources:
+      - type: dir
+        path: ../..

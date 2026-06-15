@@ -1,0 +1,1 @@
+Această versiune adaugă actualizări automate, migrări mai sigure și versionate pentru baza de date, un instalator MSI pentru Windows, o aplicație macOS pentru Apple Silicon și distribuție Flatpak pentru Linux.
