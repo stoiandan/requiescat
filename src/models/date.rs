@@ -8,9 +8,9 @@ pub struct PersonDate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DateParseError {
-    InvalidFormat,
-    InvalidDay,
-    InvalidMonth,
+    Format,
+    Day,
+    Month,
 }
 
 impl PersonDate {
@@ -19,35 +19,29 @@ impl PersonDate {
         let mut parts = value.split('-');
 
         let Some(day) = parts.next() else {
-            return Err(DateParseError::InvalidFormat);
+            return Err(DateParseError::Format);
         };
         let Some(month) = parts.next() else {
-            return Err(DateParseError::InvalidFormat);
+            return Err(DateParseError::Format);
         };
         let Some(year) = parts.next() else {
-            return Err(DateParseError::InvalidFormat);
+            return Err(DateParseError::Format);
         };
 
         if parts.next().is_some() || day.len() != 2 || month.len() != 2 || year.len() != 4 {
-            return Err(DateParseError::InvalidFormat);
+            return Err(DateParseError::Format);
         }
 
-        let day = day
-            .parse::<u8>()
-            .map_err(|_| DateParseError::InvalidFormat)?;
-        let month = month
-            .parse::<u8>()
-            .map_err(|_| DateParseError::InvalidFormat)?;
-        let year = year
-            .parse::<u16>()
-            .map_err(|_| DateParseError::InvalidFormat)?;
+        let day = day.parse::<u8>().map_err(|_| DateParseError::Format)?;
+        let month = month.parse::<u8>().map_err(|_| DateParseError::Format)?;
+        let year = year.parse::<u16>().map_err(|_| DateParseError::Format)?;
 
         if !(1..=12).contains(&month) {
-            return Err(DateParseError::InvalidMonth);
+            return Err(DateParseError::Month);
         }
 
         if day == 0 || day > days_in_month(month, year) {
-            return Err(DateParseError::InvalidDay);
+            return Err(DateParseError::Day);
         }
 
         Ok(Self {
@@ -99,18 +93,9 @@ mod tests {
 
     #[test]
     fn rejects_invalid_dates() {
-        assert_eq!(
-            PersonDate::parse("1996-04-30"),
-            Err(DateParseError::InvalidFormat)
-        );
-        assert_eq!(
-            PersonDate::parse("31-04-1996"),
-            Err(DateParseError::InvalidDay)
-        );
-        assert_eq!(
-            PersonDate::parse("30-13-1996"),
-            Err(DateParseError::InvalidMonth)
-        );
+        assert_eq!(PersonDate::parse("1996-04-30"), Err(DateParseError::Format));
+        assert_eq!(PersonDate::parse("31-04-1996"), Err(DateParseError::Day));
+        assert_eq!(PersonDate::parse("30-13-1996"), Err(DateParseError::Month));
     }
 
     #[test]

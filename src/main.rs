@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use iced::widget::{container, text};
 use iced::{Element, Length, Size, Subscription, Task, keyboard, window};
 use persistence::{CemeteryFile, CemeteryLibrary, CemeteryRepository, SqliteCemeteryRepository};
-use screens::{MapEditor, MapEditorMessage, StartMenuMessage, start_menu_view};
+use screens::{
+    MapEditor, MapEditorMessage, MapEditorUpdateOutcome, StartMenuMessage, start_menu_view,
+};
 
 fn main() -> iced::Result {
     iced::daemon(Requiescat::boot, Requiescat::update, Requiescat::view)
@@ -38,6 +40,24 @@ enum MainScreen {
     MapEditor,
 }
 
+#[derive(Debug, Clone, Default)]
+enum SaveState {
+    #[default]
+    Clean,
+    Dirty,
+    Failed(String),
+}
+
+impl SaveState {
+    fn label(&self) -> Option<&str> {
+        match self {
+            Self::Clean => None,
+            Self::Dirty => Some("Unsaved changes"),
+            Self::Failed(message) => Some(message),
+        }
+    }
+}
+
 struct Requiescat {
     editor: MapEditor,
     main_screen: MainScreen,
@@ -53,6 +73,7 @@ struct Requiescat {
     show_create_cemetery: bool,
     new_cemetery_name: String,
     status: Option<String>,
+    save_state: SaveState,
 }
 
 impl Requiescat {
@@ -90,6 +111,7 @@ impl Requiescat {
                 show_create_cemetery: false,
                 new_cemetery_name: String::new(),
                 status,
+                save_state: SaveState::Clean,
             },
             open.map(Message::MainWindowOpened),
         )
@@ -117,6 +139,9 @@ impl Requiescat {
             }
             Message::WindowClosed(id) => {
                 if Some(id) == self.main_window {
+                    if matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_)) {
+                        self.save_active_cemetery();
+                    }
                     return iced::exit();
                 }
 
@@ -162,16 +187,28 @@ impl Requiescat {
             }
             Message::Editor(MapEditorMessage::SubmitNewPerson) => {
                 if self.editor.submit_new_person() {
+                    self.save_state = SaveState::Dirty;
                     self.save_active_cemetery();
                     if let Some(id) = self.new_person_window.take() {
                         return window::close(id);
                     }
                 }
             }
-            Message::Editor(message) => {
-                self.editor.update(message);
-                self.save_active_cemetery();
-            }
+            Message::Editor(message) => match self.editor.update(message) {
+                MapEditorUpdateOutcome::Unchanged => {}
+                MapEditorUpdateOutcome::Changed => {
+                    self.save_state = SaveState::Dirty;
+                    self.save_active_cemetery();
+                }
+                MapEditorUpdateOutcome::DeferredChange => {
+                    self.save_state = SaveState::Dirty;
+                }
+                MapEditorUpdateOutcome::Commit => {
+                    if matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_)) {
+                        self.save_active_cemetery();
+                    }
+                }
+            },
         }
 
         Task::none()
@@ -201,7 +238,10 @@ impl Requiescat {
                     self.status.as_deref(),
                 )
                 .map(Message::StartMenu),
-                MainScreen::MapEditor => self.editor.view().map(Message::Editor),
+                MainScreen::MapEditor => self
+                    .editor
+                    .view(self.save_state.label())
+                    .map(Message::Editor),
             }
         } else {
             container(text("Unknown window"))
@@ -377,6 +417,7 @@ impl Requiescat {
                 self.active_database = Some(path);
                 self.main_screen = MainScreen::MapEditor;
                 self.status = None;
+                self.save_state = SaveState::Clean;
 
                 self.main_window
                     .map(|id| window::resize(id, Size::new(1100.0, 760.0)))
@@ -430,6 +471,14 @@ impl Requiescat {
     }
 
     fn export_selected_cemetery(&mut self, destination: PathBuf) {
+        if matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_))
+            && !self.save_active_cemetery()
+        {
+            self.status =
+                Some("Export cancelled because the cemetery could not be saved.".to_owned());
+            return;
+        }
+
         let (Some(library), Some(source)) = (&self.library, &self.selected_cemetery) else {
             return;
         };
@@ -451,14 +500,21 @@ impl Requiescat {
         }
     }
 
-    fn save_active_cemetery(&mut self) {
+    fn save_active_cemetery(&mut self) -> bool {
         let Some(path) = self.active_database.clone() else {
-            return;
+            return false;
         };
 
         let mut repository = SqliteCemeteryRepository::new(path);
-        if let Err(error) = repository.save(self.editor.cemetery()) {
-            self.status = Some(format!("Could not save cemetery: {error}"));
+        match repository.save(self.editor.cemetery()) {
+            Ok(()) => {
+                self.save_state = SaveState::Clean;
+                true
+            }
+            Err(error) => {
+                self.save_state = SaveState::Failed(format!("Save failed: {error}"));
+                false
+            }
         }
     }
 }

@@ -46,6 +46,15 @@ pub enum Message {
     UpdatePersonLastName(PersonId, String),
     UpdatePersonDateOfBirth(PersonId, String),
     UpdatePersonDateOfDecease(PersonId, String),
+    CommitPendingChanges,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateOutcome {
+    Unchanged,
+    Changed,
+    DeferredChange,
+    Commit,
 }
 
 impl MapEditor {
@@ -56,45 +65,62 @@ impl MapEditor {
         }
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: Message) -> UpdateOutcome {
         match message {
-            Message::OpenPersonDetails(_) => {}
+            Message::OpenPersonDetails(_) => UpdateOutcome::Unchanged,
             Message::SubmitNewPerson => {
-                self.submit_new_person();
+                if self.submit_new_person() {
+                    UpdateOutcome::Changed
+                } else {
+                    UpdateOutcome::Unchanged
+                }
             }
             Message::NewPersonFirstNameChanged(value) => {
                 self.new_person.first_name = value;
+                UpdateOutcome::Unchanged
             }
             Message::NewPersonLastNameChanged(value) => {
                 self.new_person.last_name = value;
+                UpdateOutcome::Unchanged
             }
             Message::NewPersonDateOfBirthChanged(value) => {
                 self.new_person.date_of_birth = value;
+                UpdateOutcome::Unchanged
             }
             Message::NewPersonDateOfDeceaseChanged(value) => {
                 self.new_person.date_of_decease = value;
+                UpdateOutcome::Unchanged
             }
             Message::CreateGrave(rectangle) => {
                 self.cemetery.add_grave(rectangle);
+                UpdateOutcome::Changed
             }
-            Message::ToolBarAction(action) => self.toolbar.update(action),
+            Message::ToolBarAction(action) => {
+                self.toolbar.update(action);
+                UpdateOutcome::Unchanged
+            }
             Message::EraseGrave(id) => {
                 self.cemetery.erase_grave(id);
                 if self.selected_grave == Some(id) {
                     self.selected_grave = None;
                 }
+                UpdateOutcome::Changed
             }
             Message::MoveGrave { id, delta } => {
                 self.cemetery.move_grave(id, delta);
+                UpdateOutcome::DeferredChange
             }
             Message::PanCamera(delta) => {
                 self.camera.pan_by_canvas_delta(delta);
+                UpdateOutcome::Unchanged
             }
             Message::ZoomCamera { cursor, amount } => {
                 self.camera.zoom_at(cursor, amount);
+                UpdateOutcome::Unchanged
             }
             Message::SelectGrave(id) => {
                 self.selected_grave = id;
+                UpdateOutcome::Unchanged
             }
             Message::SelectPerson(id) => {
                 self.selected_person = Some(id);
@@ -102,17 +128,23 @@ impl MapEditor {
                 if let Some(grave_id) = self.selected_grave {
                     self.center_camera_on_grave(grave_id);
                 }
+                UpdateOutcome::Unchanged
             }
             Message::PersonSearchChanged(value) => {
                 self.person_search = value;
+                UpdateOutcome::Unchanged
             }
             Message::AssignPersonToSelectedGrave(person_id) => {
                 if let Some(grave_id) = self.selected_grave {
                     self.cemetery.assign_person_to_grave(person_id, grave_id);
+                    UpdateOutcome::Changed
+                } else {
+                    UpdateOutcome::Unchanged
                 }
             }
             Message::UnassignPersonFromGrave(person_id) => {
                 self.cemetery.unassign_person_from_grave(person_id);
+                UpdateOutcome::Changed
             }
             Message::UpdatePersonFirstName(id, value) => {
                 self.person_edits.entry(id).or_default().first_name = Some(value.clone());
@@ -121,6 +153,9 @@ impl MapEditor {
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
                     person.set_first_name(value);
+                    UpdateOutcome::Changed
+                } else {
+                    UpdateOutcome::Unchanged
                 }
             }
             Message::UpdatePersonLastName(id, value) => {
@@ -130,6 +165,9 @@ impl MapEditor {
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
                     person.set_last_name(value);
+                    UpdateOutcome::Changed
+                } else {
+                    UpdateOutcome::Unchanged
                 }
             }
             Message::UpdatePersonDateOfBirth(id, value) => {
@@ -139,6 +177,9 @@ impl MapEditor {
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
                     person.set_date_of_birth(date);
+                    UpdateOutcome::Changed
+                } else {
+                    UpdateOutcome::Unchanged
                 }
             }
             Message::UpdatePersonDateOfDecease(id, value) => {
@@ -154,12 +195,16 @@ impl MapEditor {
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
                     person.set_date_of_decease(date);
+                    UpdateOutcome::Changed
+                } else {
+                    UpdateOutcome::Unchanged
                 }
             }
+            Message::CommitPendingChanges => UpdateOutcome::Commit,
         }
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view<'a>(&'a self, save_status: Option<&'a str>) -> Element<'a, Message> {
         let selected_grave = self.selected_grave();
         let mut map_row = row![canvas(self).height(Length::Fill).width(Length::Fill)];
 
@@ -167,21 +212,28 @@ impl MapEditor {
             map_row = map_row.push(self.side_panel(grave_id));
         }
 
-        container(column![
-            map_row.height(Length::Fill),
-            row![self.toolbar.view().map(Message::ToolBarAction)]
-                .spacing(8)
-                .padding([8, 12])
-        ])
-        .style(|_| container::Style {
-            border: iced::Border {
-                color: iced::Color::WHITE,
-                width: 2.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
+        let mut footer = row![self.toolbar.view().map(Message::ToolBarAction)]
+            .spacing(8)
+            .padding([8, 12]);
+
+        if let Some(status) = save_status {
+            footer = footer.push(
+                container(text(status).size(12))
+                    .padding([6, 10])
+                    .align_y(iced::Alignment::Center),
+            );
+        }
+
+        container(column![map_row.height(Length::Fill), footer])
+            .style(|_| container::Style {
+                border: iced::Border {
+                    color: iced::Color::WHITE,
+                    width: 2.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            })
+            .into()
     }
 
     pub fn person_directory_view(&self) -> Element<'_, Message> {
@@ -713,6 +765,28 @@ mod tests {
             Some(Background::Color(Color::from_rgb8(151, 34, 47)))
         );
         assert_eq!(style.text_color, Color::WHITE);
+    }
+
+    #[test]
+    fn update_reports_only_persistent_model_changes() {
+        let mut editor = MapEditor::default();
+
+        assert_eq!(
+            editor.update(Message::PersonSearchChanged("Ada".to_owned())),
+            UpdateOutcome::Unchanged
+        );
+        assert_eq!(
+            editor.update(Message::PanCamera(Vector::new(4.0, 2.0))),
+            UpdateOutcome::Unchanged
+        );
+        assert_eq!(
+            editor.update(Message::CreateGrave(rectangle_at(0.0, 0.0))),
+            UpdateOutcome::Changed
+        );
+        assert_eq!(
+            editor.update(Message::CommitPendingChanges),
+            UpdateOutcome::Commit
+        );
     }
 }
 

@@ -3,9 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use iced::{Point, Size};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 use crate::models::{Cemetery, Grave, GraveId, GraveRectangle, Person, PersonDate, PersonId};
+
+const APPLICATION_ID: &str = "requiescat";
+const SCHEMA_VERSION: &str = "1";
 
 pub trait CemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError>;
@@ -89,7 +92,7 @@ impl CemeteryLibrary {
     }
 
     pub fn import(&self, source: &Path) -> Result<PathBuf, PersistenceError> {
-        SqliteCemeteryRepository::new(source.to_owned()).load()?;
+        SqliteCemeteryRepository::new(source.to_owned()).validate()?;
 
         let file_name = source
             .file_name()
@@ -130,37 +133,29 @@ impl SqliteCemeteryRepository {
         Self { path }
     }
 
-    fn connection(&self) -> Result<Connection, PersistenceError> {
+    pub fn validate(&self) -> Result<(), PersistenceError> {
+        let connection = self.read_only_connection()?;
+        validate_schema(&connection)
+    }
+
+    fn read_only_connection(&self) -> Result<Connection, PersistenceError> {
+        let connection = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        configure_connection(&connection)?;
+        Ok(connection)
+    }
+
+    fn writable_connection(&self) -> Result<Connection, PersistenceError> {
         let connection = Connection::open(&self.path)?;
-        connection.execute_batch(
-            "
-            PRAGMA foreign_keys = ON;
-
-            CREATE TABLE IF NOT EXISTS graves (
-                id INTEGER PRIMARY KEY,
-                x REAL NOT NULL,
-                y REAL NOT NULL,
-                width REAL NOT NULL,
-                height REAL NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS persons (
-                id INTEGER PRIMARY KEY,
-                first_name TEXT NOT NULL,
-                last_name TEXT NOT NULL,
-                date_of_birth TEXT NOT NULL,
-                date_of_decease TEXT,
-                grave_id INTEGER REFERENCES graves(id) ON DELETE SET NULL
-            );
-            ",
-        )?;
+        configure_connection(&connection)?;
+        initialize_schema(&connection)?;
         Ok(connection)
     }
 }
 
 impl CemeteryRepository for SqliteCemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError> {
-        let connection = self.connection()?;
+        let connection = self.read_only_connection()?;
+        validate_schema(&connection)?;
 
         let graves = {
             let mut statement =
@@ -211,7 +206,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
     }
 
     fn save(&mut self, cemetery: &Cemetery) -> Result<(), PersistenceError> {
-        let mut connection = self.connection()?;
+        let mut connection = self.writable_connection()?;
         let transaction = connection.transaction()?;
 
         transaction.execute("DELETE FROM persons", [])?;
@@ -237,7 +232,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
                 ",
             )?;
 
-            for person in cemetery.search_people("") {
+            for person in cemetery.people() {
                 let row = PersonRow::from(person.clone());
                 let date_of_decease =
                     (!row.date_of_decease.is_empty()).then_some(row.date_of_decease.as_str());
@@ -255,6 +250,137 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         transaction.commit()?;
         Ok(())
     }
+}
+
+fn configure_connection(connection: &Connection) -> Result<(), PersistenceError> {
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    Ok(())
+}
+
+fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
+    connection.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS requiescat_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS graves (
+            id INTEGER PRIMARY KEY,
+            x REAL NOT NULL,
+            y REAL NOT NULL,
+            width REAL NOT NULL,
+            height REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS persons (
+            id INTEGER PRIMARY KEY,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            date_of_birth TEXT NOT NULL,
+            date_of_decease TEXT,
+            grave_id INTEGER REFERENCES graves(id) ON DELETE SET NULL
+        );
+        ",
+    )?;
+    connection.execute(
+        "
+        INSERT INTO requiescat_metadata (key, value)
+        VALUES ('application', ?1)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        ",
+        [APPLICATION_ID],
+    )?;
+    connection.execute(
+        "
+        INSERT INTO requiescat_metadata (key, value)
+        VALUES ('schema_version', ?1)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        ",
+        [SCHEMA_VERSION],
+    )?;
+    Ok(())
+}
+
+fn validate_schema(connection: &Connection) -> Result<(), PersistenceError> {
+    if table_exists(connection, "requiescat_metadata")? {
+        let application = metadata_value(connection, "application")?;
+        if application.as_deref() != Some(APPLICATION_ID) {
+            return Err(PersistenceError::InvalidData(
+                "This SQLite file is not a Requiescat cemetery.".to_owned(),
+            ));
+        }
+
+        let version = metadata_value(connection, "schema_version")?;
+        if version.as_deref() != Some(SCHEMA_VERSION) {
+            return Err(PersistenceError::InvalidData(format!(
+                "Unsupported cemetery schema version: {}",
+                version.as_deref().unwrap_or("missing")
+            )));
+        }
+    }
+
+    validate_table_columns(connection, "graves", &["id", "x", "y", "width", "height"])?;
+    validate_table_columns(
+        connection,
+        "persons",
+        &[
+            "id",
+            "first_name",
+            "last_name",
+            "date_of_birth",
+            "date_of_decease",
+            "grave_id",
+        ],
+    )?;
+    Ok(())
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, PersistenceError> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    )?;
+    Ok(exists)
+}
+
+fn metadata_value(connection: &Connection, key: &str) -> Result<Option<String>, PersistenceError> {
+    Ok(connection
+        .query_row(
+            "SELECT value FROM requiescat_metadata WHERE key = ?1",
+            [key],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+fn validate_table_columns(
+    connection: &Connection,
+    table: &str,
+    required_columns: &[&str],
+) -> Result<(), PersistenceError> {
+    if !table_exists(connection, table)? {
+        return Err(PersistenceError::InvalidData(format!(
+            "The cemetery database is missing the {table} table."
+        )));
+    }
+
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if let Some(missing) = required_columns
+        .iter()
+        .find(|required| !columns.iter().any(|column| column.as_str() == **required))
+    {
+        return Err(PersistenceError::InvalidData(format!(
+            "The cemetery database is missing the {table}.{missing} column."
+        )));
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -517,10 +643,79 @@ mod tests {
 
         assert_eq!(first, directory.join("Central.sqlite"));
         assert_eq!(second, directory.join("Central 2.sqlite"));
-        assert!(SqliteCemeteryRepository::new(first).load().is_ok());
+        assert!(SqliteCemeteryRepository::new(first.clone()).load().is_ok());
         assert!(SqliteCemeteryRepository::new(second).load().is_ok());
 
+        let connection = Connection::open(first).unwrap();
+        assert_eq!(
+            metadata_value(&connection, "application")
+                .unwrap()
+                .as_deref(),
+            Some(APPLICATION_ID)
+        );
+        drop(connection);
+
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn import_rejects_unrelated_sqlite_without_modifying_it() {
+        let root = std::env::temp_dir().join(format!(
+            "requiescat-import-validation-test-{}",
+            std::process::id()
+        ));
+        let library = CemeteryLibrary::new(root.join("library")).unwrap();
+        let source = root.join("unrelated.sqlite");
+        let connection = Connection::open(&source).unwrap();
+        connection
+            .execute("CREATE TABLE notes (body TEXT NOT NULL)", [])
+            .unwrap();
+        drop(connection);
+
+        assert!(library.import(&source).is_err());
+
+        let connection = Connection::open(&source).unwrap();
+        assert!(!table_exists(&connection, "graves").unwrap());
+        assert!(!table_exists(&connection, "persons").unwrap());
+        assert!(!table_exists(&connection, "requiescat_metadata").unwrap());
+        drop(connection);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_cemetery_without_metadata_remains_readable() {
+        let path = std::env::temp_dir().join(format!(
+            "requiescat-legacy-validation-test-{}.sqlite",
+            std::process::id()
+        ));
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE graves (
+                    id INTEGER PRIMARY KEY,
+                    x REAL NOT NULL,
+                    y REAL NOT NULL,
+                    width REAL NOT NULL,
+                    height REAL NOT NULL
+                );
+                CREATE TABLE persons (
+                    id INTEGER PRIMARY KEY,
+                    first_name TEXT NOT NULL,
+                    last_name TEXT NOT NULL,
+                    date_of_birth TEXT NOT NULL,
+                    date_of_decease TEXT,
+                    grave_id INTEGER REFERENCES graves(id) ON DELETE SET NULL
+                );
+                ",
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(SqliteCemeteryRepository::new(path.clone()).load().is_ok());
+
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

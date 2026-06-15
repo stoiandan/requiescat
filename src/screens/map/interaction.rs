@@ -99,8 +99,11 @@ fn handle_left_release(
 
             return Some(Action::request_redraw());
         }
-        DragState::Panning { .. } | DragState::MovingGrave { .. } => {
+        DragState::Panning { .. } => {
             return None;
+        }
+        DragState::MovingGrave { .. } => {
+            return Some(Action::publish(Message::CommitPendingChanges));
         }
         DragState::None => {}
     }

@@ -78,6 +78,10 @@ impl PersonDirectory {
             .collect()
     }
 
+    pub fn people(&self) -> impl Iterator<Item = &Person> {
+        self.people.iter()
+    }
+
     pub fn person(&self, id: PersonId) -> Option<&Person> {
         self.people.iter().find(|person| person.id() == id)
     }

@@ -87,6 +87,10 @@ impl Cemetery {
         self.people.search(query)
     }
 
+    pub fn people(&self) -> impl Iterator<Item = &Person> {
+        self.people.people()
+    }
+
     pub fn person(&self, id: PersonId) -> Option<&Person> {
         self.people.person(id)
     }
