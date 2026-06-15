@@ -70,3 +70,16 @@ cemetery-exported = Cimitir exportat.
 could-not-export-cemetery = Cimitirul nu a putut fi exportat: { $error }
 could-not-refresh-cemeteries = Lista cimitirelor nu a putut fi actualizată: { $error }
 save-failed = Salvarea a eșuat: { $error }
+
+software-updates = Actualizări software
+checking-for-updates = Se caută actualizări…
+application-up-to-date = Requiescat { $version } este actualizat.
+check-again = Verifică din nou
+update-available = Requiescat { $version } este disponibil.
+download-update = Descarcă actualizarea
+downloading-update = Se descarcă Requiescat { $version }…
+update-ready = Requiescat { $version } este gata de instalare.
+restart-and-install = Repornește și instalează
+release-notes = Notele versiunii
+update-check-failed = Verificarea actualizării a eșuat: { $error }
+try-again = Încearcă din nou

@@ -214,6 +214,18 @@ pub enum MessageId {
     CouldNotExportCemetery,
     CouldNotRefreshCemeteries,
     SaveFailed,
+    SoftwareUpdates,
+    CheckingForUpdates,
+    ApplicationUpToDate,
+    CheckAgain,
+    UpdateAvailable,
+    DownloadUpdate,
+    DownloadingUpdate,
+    UpdateReady,
+    RestartAndInstall,
+    ReleaseNotes,
+    UpdateCheckFailed,
+    TryAgain,
 }
 
 impl MessageId {
@@ -280,6 +292,18 @@ impl MessageId {
             Self::CouldNotExportCemetery => "could-not-export-cemetery",
             Self::CouldNotRefreshCemeteries => "could-not-refresh-cemeteries",
             Self::SaveFailed => "save-failed",
+            Self::SoftwareUpdates => "software-updates",
+            Self::CheckingForUpdates => "checking-for-updates",
+            Self::ApplicationUpToDate => "application-up-to-date",
+            Self::CheckAgain => "check-again",
+            Self::UpdateAvailable => "update-available",
+            Self::DownloadUpdate => "download-update",
+            Self::DownloadingUpdate => "downloading-update",
+            Self::UpdateReady => "update-ready",
+            Self::RestartAndInstall => "restart-and-install",
+            Self::ReleaseNotes => "release-notes",
+            Self::UpdateCheckFailed => "update-check-failed",
+            Self::TryAgain => "try-again",
         }
     }
 }

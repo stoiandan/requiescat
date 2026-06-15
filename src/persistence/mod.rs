@@ -1,14 +1,15 @@
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use iced::{Point, Size};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, backup::Backup, params};
 
 use crate::models::{Cemetery, Grave, GraveId, GraveRectangle, Person, PersonDate, PersonId};
 
 const APPLICATION_ID: &str = "requiescat";
-const SCHEMA_VERSION: &str = "1";
+const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 pub trait CemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError>;
@@ -135,7 +136,7 @@ impl SqliteCemeteryRepository {
 
     pub fn validate(&self) -> Result<(), PersistenceError> {
         let connection = self.read_only_connection()?;
-        validate_schema(&connection)
+        validate_current_schema(&connection)
     }
 
     fn read_only_connection(&self) -> Result<Connection, PersistenceError> {
@@ -145,17 +146,46 @@ impl SqliteCemeteryRepository {
     }
 
     fn writable_connection(&self) -> Result<Connection, PersistenceError> {
+        if self.path.exists() {
+            self.migrate_if_needed()?;
+        }
+
         let connection = Connection::open(&self.path)?;
         configure_connection(&connection)?;
-        initialize_schema(&connection)?;
+        if !table_exists(&connection, "requiescat_metadata")? {
+            initialize_schema(&connection)?;
+        }
         Ok(connection)
+    }
+
+    fn migrate_if_needed(&self) -> Result<Option<PathBuf>, PersistenceError> {
+        let connection = self.read_only_connection()?;
+        validate_compatible_schema(&connection)?;
+        let version = schema_version(&connection)?;
+        drop(connection);
+
+        if version == CURRENT_SCHEMA_VERSION {
+            return Ok(None);
+        }
+
+        ensure_migration_path(version)?;
+        let backup_path = migration_backup_path(&self.path, version, CURRENT_SCHEMA_VERSION);
+        backup_database(&self.path, &backup_path)?;
+
+        let mut connection = Connection::open(&self.path)?;
+        configure_connection(&connection)?;
+        migrate_schema(&mut connection, version)?;
+        validate_current_schema(&connection)?;
+
+        Ok(Some(backup_path))
     }
 }
 
 impl CemeteryRepository for SqliteCemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError> {
+        self.migrate_if_needed()?;
         let connection = self.read_only_connection()?;
-        validate_schema(&connection)?;
+        validate_current_schema(&connection)?;
 
         let graves = {
             let mut statement =
@@ -281,6 +311,11 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
             date_of_decease TEXT,
             grave_id INTEGER REFERENCES graves(id) ON DELETE SET NULL
         );
+
+        CREATE TABLE IF NOT EXISTS requiescat_migrations (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         ",
     )?;
     connection.execute(
@@ -297,12 +332,19 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
         VALUES ('schema_version', ?1)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
         ",
-        [SCHEMA_VERSION],
+        [CURRENT_SCHEMA_VERSION.to_string()],
+    )?;
+    connection.execute(
+        "
+        INSERT OR IGNORE INTO requiescat_migrations (version)
+        VALUES (?1)
+        ",
+        [CURRENT_SCHEMA_VERSION],
     )?;
     Ok(())
 }
 
-fn validate_schema(connection: &Connection) -> Result<(), PersistenceError> {
+fn validate_compatible_schema(connection: &Connection) -> Result<(), PersistenceError> {
     if table_exists(connection, "requiescat_metadata")? {
         let application = metadata_value(connection, "application")?;
         if application.as_deref() != Some(APPLICATION_ID) {
@@ -311,11 +353,10 @@ fn validate_schema(connection: &Connection) -> Result<(), PersistenceError> {
             ));
         }
 
-        let version = metadata_value(connection, "schema_version")?;
-        if version.as_deref() != Some(SCHEMA_VERSION) {
+        let version = schema_version(connection)?;
+        if version > CURRENT_SCHEMA_VERSION {
             return Err(PersistenceError::InvalidData(format!(
-                "Unsupported cemetery schema version: {}",
-                version.as_deref().unwrap_or("missing")
+                "This cemetery uses schema version {version}, but this version of Requiescat supports up to version {CURRENT_SCHEMA_VERSION}."
             )));
         }
     }
@@ -334,6 +375,94 @@ fn validate_schema(connection: &Connection) -> Result<(), PersistenceError> {
         ],
     )?;
     Ok(())
+}
+
+fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceError> {
+    validate_compatible_schema(connection)?;
+
+    let version = schema_version(connection)?;
+    if version != CURRENT_SCHEMA_VERSION {
+        return Err(PersistenceError::InvalidData(format!(
+            "Unsupported cemetery schema version: {version}"
+        )));
+    }
+
+    validate_table_columns(
+        connection,
+        "requiescat_migrations",
+        &["version", "applied_at"],
+    )
+}
+
+fn schema_version(connection: &Connection) -> Result<u32, PersistenceError> {
+    if !table_exists(connection, "requiescat_metadata")? {
+        return Ok(0);
+    }
+
+    let version = metadata_value(connection, "schema_version")?.ok_or_else(|| {
+        PersistenceError::InvalidData("The cemetery schema version is missing.".to_owned())
+    })?;
+
+    version.parse().map_err(|_| {
+        PersistenceError::InvalidData(format!("Invalid cemetery schema version: {version}"))
+    })
+}
+
+fn migrate_schema(connection: &mut Connection, from_version: u32) -> Result<(), PersistenceError> {
+    ensure_migration_path(from_version)?;
+    let transaction = connection.transaction()?;
+
+    // Add ordered migrations here when CURRENT_SCHEMA_VERSION first increases.
+    let migrated_version = from_version;
+
+    if migrated_version != CURRENT_SCHEMA_VERSION {
+        return Err(PersistenceError::InvalidData(format!(
+            "No migration path from schema version {from_version} to {CURRENT_SCHEMA_VERSION}."
+        )));
+    }
+
+    transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_migration_path(from_version: u32) -> Result<(), PersistenceError> {
+    if from_version == CURRENT_SCHEMA_VERSION {
+        Ok(())
+    } else {
+        Err(PersistenceError::InvalidData(format!(
+            "No migration path from schema version {from_version} to {CURRENT_SCHEMA_VERSION}."
+        )))
+    }
+}
+
+fn backup_database(source: &Path, destination: &Path) -> Result<(), PersistenceError> {
+    let source = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let mut destination = Connection::open(destination)?;
+    let backup = Backup::new(&source, &mut destination)?;
+    backup.run_to_completion(32, Duration::from_millis(10), None)?;
+    Ok(())
+}
+
+fn migration_backup_path(source: &Path, from_version: u32, to_version: u32) -> PathBuf {
+    let directory = source.parent().unwrap_or_else(|| Path::new("."));
+    let stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("cemetery");
+    let extension = source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("sqlite");
+    let base = format!("{stem}.before-schema-{from_version}-to-{to_version}");
+    let mut destination = directory.join(format!("{base}.{extension}"));
+    let mut suffix = 2;
+
+    while destination.exists() {
+        destination = directory.join(format!("{base}-{suffix}.{extension}"));
+        suffix += 1;
+    }
+
+    destination
 }
 
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, PersistenceError> {
@@ -653,6 +782,17 @@ mod tests {
                 .as_deref(),
             Some(APPLICATION_ID)
         );
+        assert_eq!(schema_version(&connection).unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM requiescat_migrations WHERE version = ?1",
+                    [CURRENT_SCHEMA_VERSION],
+                    |row| row.get::<_, usize>(0),
+                )
+                .unwrap(),
+            1
+        );
         drop(connection);
 
         fs::remove_dir_all(directory).unwrap();
@@ -684,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_cemetery_without_metadata_remains_readable() {
+    fn database_without_version_metadata_is_rejected() {
         let path = std::env::temp_dir().join(format!(
             "requiescat-legacy-validation-test-{}.sqlite",
             std::process::id()
@@ -713,8 +853,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        assert!(SqliteCemeteryRepository::new(path.clone()).load().is_ok());
-
+        assert!(SqliteCemeteryRepository::new(path.clone()).load().is_err());
         fs::remove_file(path).unwrap();
     }
 

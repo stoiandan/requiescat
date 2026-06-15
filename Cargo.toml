@@ -6,6 +6,10 @@ edition = "2024"
 [dependencies]
 fluent-bundle = "0.16.0"
 iced = { version = "0.14.0", features = ["canvas"] }
+reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
 rfd = "0.15.4"
-rusqlite = { version = "0.37.0", features = ["bundled"] }
+rusqlite = { version = "0.37.0", features = ["backup", "bundled"] }
+semver = "1.0.27"
+serde = { version = "1.0.228", features = ["derive"] }
+sha2 = "0.10.9"
 unic-langid = { version = "0.9.6", features = ["macros"] }

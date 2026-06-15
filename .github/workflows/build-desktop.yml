@@ -6,9 +6,6 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: read
-
 env:
   CARGO_TERM_COLOR: always
 
@@ -16,6 +13,13 @@ jobs:
   windows:
     name: Windows portable app
     runs-on: windows-latest
+    env:
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out source
@@ -26,6 +30,28 @@ jobs:
 
       - name: Build release executable
         run: cargo build --locked --release
+
+      - name: Sign Windows executable
+        if: env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP "requiescat-signing.pfx"
+          [IO.File]::WriteAllBytes(
+            $certificate,
+            [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          )
+          $signTool = Get-ChildItem `
+            "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName |
+            Select-Object -Last 1
+          & $signTool.FullName sign `
+            /fd SHA256 `
+            /f $certificate `
+            /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+            /tr http://timestamp.digicert.com `
+            /td SHA256 `
+            target/release/requiescat.exe
+          Remove-Item $certificate -Force
 
       - name: Package portable executable
         shell: pwsh
@@ -44,9 +70,26 @@ jobs:
           path: requiescat-windows-x86_64.zip
           if-no-files-found: error
 
+      - name: Attest Windows package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: requiescat-windows-x86_64.zip
+
   macos:
     name: macOS universal app
     runs-on: macos-latest
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out source
@@ -65,6 +108,7 @@ jobs:
 
       - name: Create universal app bundle
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           APP="dist/Requiescat.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -74,6 +118,12 @@ jobs:
             -output "$APP/Contents/MacOS/requiescat"
 
           cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c \
+            "Set :CFBundleShortVersionString $VERSION" \
+            "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c \
+            "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" \
+            "$APP/Contents/Info.plist"
           cp packaging/icons/requiescat.icns \
             "$APP/Contents/Resources/requiescat.icns"
           cp LICENSE "$APP/Contents/Resources/LICENSE"
@@ -81,8 +131,53 @@ jobs:
 
           plutil -lint "$APP/Contents/Info.plist"
           lipo -info "$APP/Contents/MacOS/requiescat"
+
+      - name: Sign macOS app
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          CERTIFICATE="$RUNNER_TEMP/requiescat-signing.p12"
+          KEYCHAIN="$RUNNER_TEMP/requiescat-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$CERTIFICATE"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERTIFICATE" \
+            -k "$KEYCHAIN" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN"
+
+          codesign --deep --force --verify --verbose \
+            --options runtime \
+            --timestamp \
+            --keychain "$KEYCHAIN" \
+            --sign "$MACOS_SIGNING_IDENTITY" \
+            dist/Requiescat.app
+          codesign --verify --deep --strict --verbose=2 dist/Requiescat.app
+
+      - name: Notarize macOS app
+        if: env.MACOS_CERTIFICATE != '' && env.APPLE_ID != ''
+        run: |
           ditto -c -k --sequesterRsrc --keepParent \
-            "$APP" requiescat-macos-universal.zip
+            dist/Requiescat.app "$RUNNER_TEMP/requiescat-notarization.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/requiescat-notarization.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple dist/Requiescat.app
+          xcrun stapler validate dist/Requiescat.app
+
+      - name: Package macOS app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/Requiescat.app requiescat-macos-universal.zip
 
       - name: Upload macOS package
         uses: actions/upload-artifact@v7
@@ -91,9 +186,19 @@ jobs:
           path: requiescat-macos-universal.zip
           if-no-files-found: error
 
+      - name: Attest macOS package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: requiescat-macos-universal.zip
+
   linux:
     name: Linux portable app
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out source
@@ -126,3 +231,100 @@ jobs:
           name: requiescat-linux-x86_64
           path: requiescat-linux-x86_64.tar.gz
           if-no-files-found: error
+
+      - name: Attest Linux package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: requiescat-linux-x86_64.tar.gz
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Download platform packages
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Validate release version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "Tag version $VERSION does not match Cargo.toml $CARGO_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Build release manifest
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd release-assets
+          VERSION="${TAG#v}"
+          WINDOWS_SHA="$(sha256sum requiescat-windows-x86_64.zip | cut -d' ' -f1)"
+          MACOS_SHA="$(sha256sum requiescat-macos-universal.zip | cut -d' ' -f1)"
+          LINUX_SHA="$(sha256sum requiescat-linux-x86_64.tar.gz | cut -d' ' -f1)"
+          BASE_URL="https://github.com/${REPOSITORY}/releases/download/${TAG}"
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes_url "https://github.com/${REPOSITORY}/releases/tag/${TAG}" \
+            --arg base_url "$BASE_URL" \
+            --arg windows_sha "$WINDOWS_SHA" \
+            --arg macos_sha "$MACOS_SHA" \
+            --arg linux_sha "$LINUX_SHA" \
+            '{
+              version: $version,
+              notes_url: $notes_url,
+              assets: {
+                "windows-x86_64": {
+                  url: ($base_url + "/requiescat-windows-x86_64.zip"),
+                  sha256: $windows_sha,
+                  file_name: "requiescat-windows-x86_64.zip",
+                  format: "zip"
+                },
+                "macos-universal": {
+                  url: ($base_url + "/requiescat-macos-universal.zip"),
+                  sha256: $macos_sha,
+                  file_name: "requiescat-macos-universal.zip",
+                  format: "zip"
+                },
+                "linux-x86_64": {
+                  url: ($base_url + "/requiescat-linux-x86_64.tar.gz"),
+                  sha256: $linux_sha,
+                  file_name: "requiescat-linux-x86_64.tar.gz",
+                  format: "tar-gz"
+                }
+              }
+            }' > release-manifest.json
+
+      - name: Attest release manifest
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: release-assets/release-manifest.json
+
+      - name: Publish release and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --title "Requiescat ${GITHUB_REF_NAME#v}" \
+              --generate-notes \
+              --verify-tag
+          fi

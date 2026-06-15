@@ -4,6 +4,7 @@ mod localization;
 mod models;
 mod persistence;
 mod screens;
+mod updater;
 
 use std::path::PathBuf;
 
@@ -12,8 +13,10 @@ use iced::{Element, Length, Size, Subscription, Task, keyboard, window};
 use localization::{Language, Localizer, MessageId};
 use persistence::{CemeteryFile, CemeteryLibrary, CemeteryRepository, SqliteCemeteryRepository};
 use screens::{
-    MapEditor, MapEditorMessage, MapEditorUpdateOutcome, StartMenuMessage, start_menu_view,
+    MapEditor, MapEditorMessage, MapEditorUpdateOutcome, StartMenuMessage, StartMenuViewState,
+    UpdateStatusView, start_menu_view,
 };
+use updater::{AvailableUpdate, StagedUpdate};
 
 fn main() -> iced::Result {
     iced::daemon(Requiescat::boot, Requiescat::update, Requiescat::view)
@@ -35,6 +38,8 @@ enum Message {
     ImportPathChosen(Option<PathBuf>),
     ExportPathChosen(Option<PathBuf>),
     Editor(MapEditorMessage),
+    UpdateCheckFinished(Result<Option<AvailableUpdate>, String>),
+    UpdateDownloaded(Result<StagedUpdate, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +54,39 @@ enum SaveState {
     Clean,
     Dirty,
     Failed(String),
+}
+
+#[derive(Debug, Clone, Default)]
+enum UpdateState {
+    #[default]
+    Checking,
+    UpToDate,
+    Available(AvailableUpdate),
+    Downloading(AvailableUpdate),
+    Ready {
+        update: StagedUpdate,
+        notes_url: String,
+    },
+    Failed(String),
+}
+
+impl UpdateState {
+    fn view(&self) -> UpdateStatusView<'_> {
+        match self {
+            Self::Checking => UpdateStatusView::Checking,
+            Self::UpToDate => UpdateStatusView::UpToDate,
+            Self::Available(update) => UpdateStatusView::Available {
+                version: &update.version,
+            },
+            Self::Downloading(update) => UpdateStatusView::Downloading {
+                version: &update.version,
+            },
+            Self::Ready { update, .. } => UpdateStatusView::Ready {
+                version: &update.version,
+            },
+            Self::Failed(error) => UpdateStatusView::Failed(error),
+        }
+    }
 }
 
 impl SaveState {
@@ -123,6 +161,7 @@ struct Requiescat {
     new_cemetery_name: String,
     status: Option<AppStatus>,
     save_state: SaveState,
+    update_state: UpdateState,
 }
 
 impl Requiescat {
@@ -170,8 +209,12 @@ impl Requiescat {
                 new_cemetery_name: String::new(),
                 status,
                 save_state: SaveState::Clean,
+                update_state: UpdateState::Checking,
             },
-            open.map(Message::MainWindowOpened),
+            Task::batch([
+                open.map(Message::MainWindowOpened),
+                check_for_updates_task(),
+            ]),
         )
     }
 
@@ -270,6 +313,23 @@ impl Requiescat {
                     }
                 }
             },
+            Message::UpdateCheckFinished(result) => {
+                self.update_state = match result {
+                    Ok(Some(update)) => UpdateState::Available(update),
+                    Ok(None) => UpdateState::UpToDate,
+                    Err(error) => UpdateState::Failed(error),
+                };
+            }
+            Message::UpdateDownloaded(result) => {
+                let notes_url = match &self.update_state {
+                    UpdateState::Downloading(update) => update.notes_url.clone(),
+                    _ => String::new(),
+                };
+                self.update_state = match result {
+                    Ok(update) => UpdateState::Ready { update, notes_url },
+                    Err(error) => UpdateState::Failed(error),
+                };
+            }
         }
 
         Task::none()
@@ -301,12 +361,15 @@ impl Requiescat {
             match self.main_screen {
                 MainScreen::StartMenu => start_menu_view(
                     &self.localizer,
-                    &self.cemeteries,
-                    self.selected_cemetery.as_deref(),
-                    self.show_cemeteries,
-                    self.show_create_cemetery,
-                    &self.new_cemetery_name,
-                    status,
+                    StartMenuViewState {
+                        cemeteries: &self.cemeteries,
+                        selected: self.selected_cemetery.as_deref(),
+                        show_cemeteries: self.show_cemeteries,
+                        show_create_cemetery: self.show_create_cemetery,
+                        new_cemetery_name: &self.new_cemetery_name,
+                        status,
+                        update_status: self.update_state.view(),
+                    },
                 )
                 .map(Message::StartMenu),
                 MainScreen::MapEditor => self
@@ -500,6 +563,43 @@ impl Requiescat {
                     Message::ExportPathChosen,
                 );
             }
+            StartMenuMessage::CheckForUpdates => {
+                self.update_state = UpdateState::Checking;
+                return check_for_updates_task();
+            }
+            StartMenuMessage::DownloadUpdate => {
+                let UpdateState::Available(update) = &self.update_state else {
+                    return Task::none();
+                };
+                let update = update.clone();
+                self.update_state = UpdateState::Downloading(update.clone());
+                return Task::perform(updater::download_update(update), |result| {
+                    Message::UpdateDownloaded(result.map_err(|error| error.to_string()))
+                });
+            }
+            StartMenuMessage::InstallUpdate => {
+                let UpdateState::Ready { update, .. } = &self.update_state else {
+                    return Task::none();
+                };
+                match updater::install_and_restart(update) {
+                    Ok(()) => return iced::exit(),
+                    Err(error) => self.update_state = UpdateState::Failed(error.to_string()),
+                }
+            }
+            StartMenuMessage::OpenReleaseNotes => {
+                let notes_url = match &self.update_state {
+                    UpdateState::Available(update) | UpdateState::Downloading(update) => {
+                        Some(update.notes_url.as_str())
+                    }
+                    UpdateState::Ready { notes_url, .. } => Some(notes_url.as_str()),
+                    _ => None,
+                };
+                if let Some(notes_url) = notes_url
+                    && let Err(error) = updater::open_release_notes(notes_url)
+                {
+                    self.update_state = UpdateState::Failed(error.to_string());
+                }
+            }
         }
 
         Task::none()
@@ -617,6 +717,12 @@ impl Requiescat {
             }
         }
     }
+}
+
+fn check_for_updates_task() -> Task<Message> {
+    Task::perform(updater::check_for_update(), |result| {
+        Message::UpdateCheckFinished(result.map_err(|error| error.to_string()))
+    })
 }
 
 fn is_command_shortcut(event: &keyboard::Event, character: char) -> bool {

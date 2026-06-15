@@ -25,26 +25,42 @@ pub enum Message {
     SubmitCreateCemetery,
     ImportCemetery,
     ExportSelected,
+    CheckForUpdates,
+    DownloadUpdate,
+    InstallUpdate,
+    OpenReleaseNotes,
 }
 
-pub fn view<'a>(
-    localizer: &'a Localizer,
-    cemeteries: &'a [CemeteryFile],
-    selected: Option<&Path>,
-    show_cemeteries: bool,
-    show_create_cemetery: bool,
-    new_cemetery_name: &'a str,
-    status: Option<String>,
-) -> Element<'a, Message> {
-    if show_create_cemetery {
-        return create_cemetery_form(localizer, new_cemetery_name, status);
+#[derive(Debug, Clone, Copy)]
+pub enum UpdateStatusView<'a> {
+    Checking,
+    UpToDate,
+    Available { version: &'a str },
+    Downloading { version: &'a str },
+    Ready { version: &'a str },
+    Failed(&'a str),
+}
+
+pub struct ViewState<'a> {
+    pub cemeteries: &'a [CemeteryFile],
+    pub selected: Option<&'a Path>,
+    pub show_cemeteries: bool,
+    pub show_create_cemetery: bool,
+    pub new_cemetery_name: &'a str,
+    pub status: Option<String>,
+    pub update_status: UpdateStatusView<'a>,
+}
+
+pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, Message> {
+    if state.show_create_cemetery {
+        return create_cemetery_form(localizer, state.new_cemetery_name, state.status);
     }
 
-    if show_cemeteries {
-        return cemetery_list(localizer, cemeteries, selected, status);
+    if state.show_cemeteries {
+        return cemetery_list(localizer, state.cemeteries, state.selected, state.status);
     }
 
-    let library_summary = match cemeteries.len() {
+    let library_summary = match state.cemeteries.len() {
         0 => localizer.text(MessageId::LibraryEmpty),
         count => localizer.count(MessageId::LibraryCount, count),
     };
@@ -92,7 +108,7 @@ pub fn view<'a>(
         ..Default::default()
     });
 
-    let (heading, supporting_text) = if cemeteries.is_empty() {
+    let (heading, supporting_text) = if state.cemeteries.is_empty() {
         (
             localizer.text(MessageId::SetupLibrary),
             localizer.text(MessageId::SetupLibraryDescription),
@@ -106,7 +122,7 @@ pub fn view<'a>(
 
     let mut action_buttons = column![].spacing(10);
 
-    if cemeteries.is_empty() {
+    if state.cemeteries.is_empty() {
         action_buttons = action_buttons
             .push(menu_button(
                 localizer.text(MessageId::CreateNewCemetery),
@@ -136,7 +152,7 @@ pub fn view<'a>(
                 false,
             ));
 
-        if let Some(selected) = selected {
+        if let Some(selected) = state.selected {
             let export_label = selected
                 .file_stem()
                 .and_then(|name| name.to_str())
@@ -156,7 +172,8 @@ pub fn view<'a>(
             ]
             .spacing(6),
             action_buttons,
-            status_view(status)
+            status_view(state.status),
+            update_status_view(localizer, state.update_status)
         ]
         .spacing(24),
     )
@@ -167,10 +184,101 @@ pub fn view<'a>(
     let panel = container(row![brand, actions])
         .width(Length::Fill)
         .height(Length::Fill)
-        .max_height(330)
+        .max_height(410)
         .style(|_| panel_style(16.0));
 
     screen(panel)
+}
+
+fn update_status_view<'a>(
+    localizer: &'a Localizer,
+    status: UpdateStatusView<'a>,
+) -> Element<'a, Message> {
+    let (message, primary_action, show_notes) = match status {
+        UpdateStatusView::Checking => (localizer.text(MessageId::CheckingForUpdates), None, false),
+        UpdateStatusView::UpToDate => (
+            localizer.value(
+                MessageId::ApplicationUpToDate,
+                "version",
+                env!("CARGO_PKG_VERSION"),
+            ),
+            Some((
+                localizer.text(MessageId::CheckAgain),
+                Message::CheckForUpdates,
+            )),
+            false,
+        ),
+        UpdateStatusView::Available { version } => (
+            localizer.value(MessageId::UpdateAvailable, "version", version),
+            Some((
+                localizer.text(MessageId::DownloadUpdate),
+                Message::DownloadUpdate,
+            )),
+            true,
+        ),
+        UpdateStatusView::Downloading { version } => (
+            localizer.value(MessageId::DownloadingUpdate, "version", version),
+            None,
+            true,
+        ),
+        UpdateStatusView::Ready { version } => (
+            localizer.value(MessageId::UpdateReady, "version", version),
+            Some((
+                localizer.text(MessageId::RestartAndInstall),
+                Message::InstallUpdate,
+            )),
+            true,
+        ),
+        UpdateStatusView::Failed(error) => (
+            localizer.value(MessageId::UpdateCheckFailed, "error", error),
+            Some((
+                localizer.text(MessageId::TryAgain),
+                Message::CheckForUpdates,
+            )),
+            false,
+        ),
+    };
+
+    let mut actions = row![].spacing(8);
+    if let Some((label, action)) = primary_action {
+        actions = actions.push(
+            button(text(label).size(12))
+                .on_press(action)
+                .padding([7, 11])
+                .style(secondary_button_style),
+        );
+    }
+    if show_notes {
+        actions = actions.push(
+            button(text(localizer.text(MessageId::ReleaseNotes)).size(12))
+                .on_press(Message::OpenReleaseNotes)
+                .padding([7, 11])
+                .style(quiet_button_style),
+        );
+    }
+
+    container(
+        column![
+            text(localizer.text(MessageId::SoftwareUpdates))
+                .size(12)
+                .color(TEXT_PRIMARY),
+            text(message).size(11).color(TEXT_MUTED),
+            actions
+        ]
+        .spacing(7),
+    )
+    .width(Length::Fill)
+    .padding([9, 12])
+    .style(|_| container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.04, 0.14, 0.145))),
+        border: Border {
+            color: BORDER_COLOR,
+            width: 1.0,
+            radius: 9.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn create_cemetery_form<'a>(
