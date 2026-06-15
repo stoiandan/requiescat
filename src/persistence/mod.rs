@@ -6,7 +6,9 @@ use std::time::Duration;
 use iced::{Point, Size};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, backup::Backup, params};
 
-use crate::models::{Cemetery, Grave, GraveId, GraveRectangle, Person, PersonDate, PersonId};
+use crate::models::{
+    Cemetery, Grave, GraveColor, GraveId, GraveRectangle, Person, PersonDate, PersonId,
+};
 
 const APPLICATION_ID: &str = "requiescat";
 const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -188,8 +190,13 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         validate_current_schema(&connection)?;
 
         let graves = {
-            let mut statement =
-                connection.prepare("SELECT id, x, y, width, height FROM graves ORDER BY id")?;
+            let has_color = column_exists(&connection, "graves", "color")?;
+            let query = if has_color {
+                "SELECT id, x, y, width, height, color FROM graves ORDER BY id"
+            } else {
+                "SELECT id, x, y, width, height, '' FROM graves ORDER BY id"
+            };
+            let mut statement = connection.prepare(query)?;
             let rows = statement.query_map([], |row| {
                 Ok(GraveRow {
                     id: row.get(0)?,
@@ -197,6 +204,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
                     y: row.get(2)?,
                     width: row.get(3)?,
                     height: row.get(4)?,
+                    color: row.get(5)?,
                 })
             })?;
 
@@ -237,6 +245,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
 
     fn save(&mut self, cemetery: &Cemetery) -> Result<(), PersistenceError> {
         let mut connection = self.writable_connection()?;
+        ensure_grave_color_column(&connection)?;
         let transaction = connection.transaction()?;
 
         transaction.execute("DELETE FROM persons", [])?;
@@ -244,12 +253,17 @@ impl CemeteryRepository for SqliteCemeteryRepository {
 
         {
             let mut statement = transaction.prepare(
-                "INSERT INTO graves (id, x, y, width, height) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "
+                INSERT INTO graves (id, x, y, width, height, color)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ",
             )?;
 
             for grave in cemetery.graves().iter().copied() {
                 let row = GraveRow::from(grave);
-                statement.execute(params![row.id, row.x, row.y, row.width, row.height])?;
+                statement.execute(params![
+                    row.id, row.x, row.y, row.width, row.height, row.color
+                ])?;
             }
         }
 
@@ -300,7 +314,8 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
             x REAL NOT NULL,
             y REAL NOT NULL,
             width REAL NOT NULL,
-            height REAL NOT NULL
+            height REAL NOT NULL,
+            color TEXT NOT NULL DEFAULT '#a61f28'
         );
 
         CREATE TABLE IF NOT EXISTS persons (
@@ -484,6 +499,27 @@ fn metadata_value(connection: &Connection, key: &str) -> Result<Option<String>, 
         .optional()?)
 }
 
+fn ensure_grave_color_column(connection: &Connection) -> Result<(), PersistenceError> {
+    if !column_exists(connection, "graves", "color")? {
+        connection.execute(
+            "ALTER TABLE graves ADD COLUMN color TEXT NOT NULL DEFAULT '#a61f28'",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn column_exists(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+) -> Result<bool, PersistenceError> {
+    Ok(table_columns(connection, table)?
+        .iter()
+        .any(|existing| existing == column))
+}
+
 fn validate_table_columns(
     connection: &Connection,
     table: &str,
@@ -495,10 +531,7 @@ fn validate_table_columns(
         )));
     }
 
-    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
+    let columns = table_columns(connection, table)?;
 
     if let Some(missing) = required_columns
         .iter()
@@ -512,13 +545,21 @@ fn validate_table_columns(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+fn table_columns(connection: &Connection, table: &str) -> Result<Vec<String>, PersistenceError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    Ok(statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+#[derive(Debug, Clone)]
 pub struct GraveRow {
     pub id: i64,
     pub x: f32,
     pub y: f32,
     pub width: f32,
     pub height: f32,
+    pub color: String,
 }
 
 #[derive(Debug, Clone)]
@@ -543,18 +584,20 @@ impl From<Grave> for GraveRow {
             y: top_left.y,
             width: size.width,
             height: size.height,
+            color: grave.color().to_hex(),
         }
     }
 }
 
 impl From<GraveRow> for Grave {
     fn from(row: GraveRow) -> Self {
-        Grave::new(
+        Grave::with_color(
             GraveId::new(row.id),
             GraveRectangle::from_top_left_size(
                 Point::new(row.x, row.y),
                 Size::new(row.width, row.height),
             ),
+            GraveColor::from_hex(&row.color).unwrap_or_default(),
         )
     }
 }
@@ -904,10 +947,11 @@ mod tests {
             std::process::id()
         ));
         let mut cemetery = Cemetery::default();
-        let grave_id = cemetery.add_grave(GraveRectangle::from_top_left_size(
-            Point::new(12.0, 24.0),
-            Size::new(40.0, 80.0),
-        ));
+        let grave_color = GraveColor::from_rgb8(50, 123, 171);
+        let grave_id = cemetery.add_grave_with_color(
+            GraveRectangle::from_top_left_size(Point::new(12.0, 24.0), Size::new(40.0, 80.0)),
+            grave_color,
+        );
         cemetery.create_person_with_details(
             "Ada".to_owned(),
             "Lovelace".to_owned(),
@@ -921,13 +965,17 @@ mod tests {
         let mut loaded = repository.load().unwrap();
 
         assert_eq!(loaded.graves().len(), 1);
+        assert_eq!(loaded.grave(grave_id).map(Grave::color), Some(grave_color));
         assert_eq!(loaded.search_people("").len(), 1);
         assert_eq!(loaded.search_people("Ada")[0].grave_id(), Some(grave_id));
         assert_eq!(
-            loaded.add_grave(GraveRectangle::from_top_left_size(
-                Point::new(100.0, 100.0),
-                Size::new(20.0, 40.0),
-            )),
+            loaded.add_grave_with_color(
+                GraveRectangle::from_top_left_size(
+                    Point::new(100.0, 100.0),
+                    Size::new(20.0, 40.0),
+                ),
+                GraveColor::default(),
+            ),
             GraveId::new(2)
         );
         assert_eq!(

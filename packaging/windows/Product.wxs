@@ -10,6 +10,8 @@
       DowngradeErrorMessage="A newer version of Requiescat is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Property Id="REQUIESCAT_LAUNCH" Value="1" />
+    <Property Id="ARPPRODUCTICON" Value="RequiescatIcon" />
+    <Icon Id="RequiescatIcon" SourceFile="$(var.SourceDir)\packaging\icons\requiescat.ico" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Requiescat">
@@ -28,6 +30,7 @@
             Id="RequiescatShortcut"
             Name="Requiescat"
             Description="Cemetery records and maps"
+            Icon="RequiescatIcon"
             Target="[INSTALLFOLDER]requiescat-updater.exe"
             WorkingDirectory="INSTALLFOLDER" />
           <RemoveFolder Id="RemoveProgramMenuDirectory" On="uninstall" />

@@ -108,7 +108,7 @@ pub fn graves(
         let top_left = camera.world_to_screen(rectangle.top_left());
         let size = rectangle.size() * camera.zoom;
 
-        frame.fill_rectangle(top_left, size, iced::Color::from_rgb(0.65, 0.121, 0.157));
+        frame.fill_rectangle(top_left, size, grave.color().to_iced());
         grave_labels(
             frame,
             grave_label_rows(cemetery, grave.id()),

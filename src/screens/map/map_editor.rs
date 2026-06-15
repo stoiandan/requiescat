@@ -93,7 +93,8 @@ impl MapEditor {
                 UpdateOutcome::Unchanged
             }
             Message::CreateGrave(rectangle) => {
-                self.cemetery.add_grave(rectangle);
+                self.cemetery
+                    .add_grave_with_color(rectangle, self.toolbar.selected_grave_color());
                 UpdateOutcome::Changed
             }
             Message::ToolBarAction(action) => {
@@ -687,6 +688,8 @@ fn danger_button(_: &Theme, status: button::Status) -> button::Style {
 mod tests {
     use iced::Size;
 
+    use crate::models::GraveColor;
+
     use super::*;
 
     fn rectangle_at(x: f32, y: f32) -> GraveRectangle {
@@ -706,7 +709,9 @@ mod tests {
     #[test]
     fn assign_person_to_selected_grave_requires_a_selected_grave() {
         let mut editor = MapEditor::default();
-        let grave_id = editor.cemetery.add_grave(rectangle_at(0.0, 0.0));
+        let grave_id = editor
+            .cemetery
+            .add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
         let person_id = create_person(&mut editor, None);
 
         editor.update(Message::AssignPersonToSelectedGrave(person_id));
@@ -728,7 +733,9 @@ mod tests {
     #[test]
     fn unassign_person_from_grave_clears_their_grave() {
         let mut editor = MapEditor::default();
-        let grave_id = editor.cemetery.add_grave(rectangle_at(0.0, 0.0));
+        let grave_id = editor
+            .cemetery
+            .add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
         let person_id = create_person(&mut editor, Some(grave_id));
 
         editor.update(Message::UnassignPersonFromGrave(person_id));
@@ -742,7 +749,9 @@ mod tests {
     #[test]
     fn select_person_goes_to_their_grave() {
         let mut editor = MapEditor::default();
-        let grave_id = editor.cemetery.add_grave(rectangle_at(100.0, 200.0));
+        let grave_id = editor
+            .cemetery
+            .add_grave_with_color(rectangle_at(100.0, 200.0), GraveColor::default());
         let person_id = create_person(&mut editor, Some(grave_id));
 
         editor.update(Message::SelectPerson(person_id));
@@ -822,6 +831,19 @@ mod tests {
             Some(Background::Color(Color::from_rgb8(151, 34, 47)))
         );
         assert_eq!(style.text_color, Color::WHITE);
+    }
+
+    #[test]
+    fn created_graves_use_selected_toolbar_color() {
+        let mut editor = MapEditor::default();
+        let color = crate::models::GraveColor::from_rgb8(122, 77, 161);
+
+        editor.update(Message::ToolBarAction(ToolbarAction::SelectGraveColor(
+            color,
+        )));
+        editor.update(Message::CreateGrave(rectangle_at(0.0, 0.0)));
+
+        assert_eq!(editor.cemetery.graves()[0].color(), color);
     }
 
     #[test]

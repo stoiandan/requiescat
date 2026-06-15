@@ -4,11 +4,11 @@ app-menu-file = Fișier
 app-menu-view = Vizualizare
 app-menu-new-person = Persoană nouă
 app-menu-export-db = Exportă BD
-app-menu-person-directory = Registrul persoanelor
+app-menu-person-directory = Directorul persoanelor
 
 unsaved-changes = Modificări nesalvate
 unknown-window = Fereastră necunoscută
-person-directory-title = Registrul persoanelor
+person-directory-title = Directorul persoanelor
 new-person-title = Persoană nouă
 person-details-title = Detalii persoană
 cemetery-library-title = Requiescat - Biblioteca cimitirelor

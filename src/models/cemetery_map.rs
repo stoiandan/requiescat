@@ -1,6 +1,6 @@
 use iced::Vector;
 
-use super::{Grave, GraveId, GraveRectangle};
+use super::{Grave, GraveColor, GraveId, GraveRectangle};
 
 #[derive(Debug, Default)]
 pub struct CemeteryMap {
@@ -22,9 +22,13 @@ impl CemeteryMap {
         }
     }
 
-    pub fn add_grave(&mut self, rectangle: GraveRectangle) -> GraveId {
+    pub fn add_grave_with_color(
+        &mut self,
+        rectangle: GraveRectangle,
+        color: GraveColor,
+    ) -> GraveId {
         let id = self.next_id();
-        self.graves.push(Grave::new(id, rectangle));
+        self.graves.push(Grave::with_color(id, rectangle, color));
         id
     }
 
@@ -84,8 +88,8 @@ mod tests {
     fn add_grave_assigns_incrementing_ids_and_stores_graves() {
         let mut map = CemeteryMap::default();
 
-        let first = map.add_grave(rectangle_at(0.0, 0.0));
-        let second = map.add_grave(rectangle_at(20.0, 0.0));
+        let first = map.add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        let second = map.add_grave_with_color(rectangle_at(20.0, 0.0), GraveColor::default());
 
         assert_eq!(first, GraveId::new(1));
         assert_eq!(second, GraveId::new(2));
@@ -96,8 +100,8 @@ mod tests {
     #[test]
     fn grave_at_returns_the_matching_grave_id() {
         let mut map = CemeteryMap::default();
-        let first = map.add_grave(rectangle_at(0.0, 0.0));
-        let second = map.add_grave(rectangle_at(20.0, 0.0));
+        let first = map.add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        let second = map.add_grave_with_color(rectangle_at(20.0, 0.0), GraveColor::default());
 
         assert_eq!(map.grave_at(Point::new(5.0, 5.0)), Some(first));
         assert_eq!(map.grave_at(Point::new(25.0, 5.0)), Some(second));
@@ -107,8 +111,8 @@ mod tests {
     #[test]
     fn grave_at_returns_the_topmost_overlapping_grave() {
         let mut map = CemeteryMap::default();
-        map.add_grave(rectangle_at(0.0, 0.0));
-        let topmost = map.add_grave(rectangle_at(5.0, 5.0));
+        map.add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        let topmost = map.add_grave_with_color(rectangle_at(5.0, 5.0), GraveColor::default());
 
         assert_eq!(map.grave_at(Point::new(7.0, 7.0)), Some(topmost));
     }
@@ -116,8 +120,8 @@ mod tests {
     #[test]
     fn move_grave_translates_only_the_requested_grave() {
         let mut map = CemeteryMap::default();
-        let moved = map.add_grave(rectangle_at(0.0, 0.0));
-        let stationary = map.add_grave(rectangle_at(20.0, 0.0));
+        let moved = map.add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        let stationary = map.add_grave_with_color(rectangle_at(20.0, 0.0), GraveColor::default());
 
         map.move_grave(moved, Vector::new(5.0, -3.0));
 
@@ -135,8 +139,8 @@ mod tests {
     #[test]
     fn erase_grave_removes_only_the_requested_grave() {
         let mut map = CemeteryMap::default();
-        let removed = map.add_grave(rectangle_at(0.0, 0.0));
-        let remaining = map.add_grave(rectangle_at(20.0, 0.0));
+        let removed = map.add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        let remaining = map.add_grave_with_color(rectangle_at(20.0, 0.0), GraveColor::default());
 
         map.erase_grave(removed);
 

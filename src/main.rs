@@ -8,7 +8,7 @@ mod updater;
 
 use std::path::PathBuf;
 
-use iced::widget::{Space, button, column, container, pick_list, row, text};
+use iced::widget::{Space, button, column, container, opaque, pick_list, pin, row, stack, text};
 use iced::{
     Background, Border, Color, Element, Length, Shadow, Size, Subscription, Task, Theme, Vector,
     keyboard, window,
@@ -48,6 +48,7 @@ enum Message {
     WindowClosed(window::Id),
     Keyboard(keyboard::Event),
     LanguageSelected(Language),
+    ToggleAppMenu(AppMenu),
     NewPerson,
     OpenPersonDirectory,
     ExportActiveCemetery,
@@ -63,6 +64,12 @@ enum Message {
 enum MainScreen {
     StartMenu,
     MapEditor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppMenu {
+    File,
+    View,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -180,6 +187,7 @@ struct Requiescat {
     status: Option<AppStatus>,
     save_state: SaveState,
     update_state: UpdateState,
+    app_menu: Option<AppMenu>,
 }
 
 impl Requiescat {
@@ -228,6 +236,7 @@ impl Requiescat {
                 status,
                 save_state: SaveState::Clean,
                 update_state: UpdateState::Checking,
+                app_menu: None,
             },
             Task::batch([
                 open.map(Message::MainWindowOpened),
@@ -289,24 +298,38 @@ impl Requiescat {
                 }
             }
             Message::LanguageSelected(language) => {
+                self.app_menu = None;
                 self.localizer.set_language(language);
+            }
+            Message::ToggleAppMenu(menu) => {
+                if self.main_screen == MainScreen::MapEditor {
+                    self.app_menu = if self.app_menu == Some(menu) {
+                        None
+                    } else {
+                        Some(menu)
+                    };
+                }
             }
             Message::NewPerson => {
                 if self.main_screen == MainScreen::MapEditor {
+                    self.app_menu = None;
                     return self.open_new_person_dialog();
                 }
             }
             Message::OpenPersonDirectory => {
                 if self.main_screen == MainScreen::MapEditor {
+                    self.app_menu = None;
                     return self.open_person_directory();
                 }
             }
             Message::ExportActiveCemetery => {
                 if self.main_screen == MainScreen::MapEditor {
+                    self.app_menu = None;
                     return self.choose_export_path();
                 }
             }
             Message::StartMenu(message) => {
+                self.app_menu = None;
                 return self.update_start_menu(message);
             }
             Message::ImportPathChosen(path) => {
@@ -458,72 +481,98 @@ impl Requiescat {
         .spacing(8)
         .align_y(iced::Alignment::Center);
 
-        let mut menu_bar = row![].spacing(16).align_y(iced::Alignment::Center);
+        let mut menu_bar = row![].spacing(6).align_y(iced::Alignment::Center);
+        let show_app_menu = is_main_window && self.main_screen == MainScreen::MapEditor;
 
-        if is_main_window && self.main_screen == MainScreen::MapEditor {
-            menu_bar = menu_bar.push(self.app_menu_group(
-                self.localizer.text(MessageId::AppMenuFile),
-                [
-                    (
-                        self.localizer.text(MessageId::AppMenuNewPerson),
-                        Message::NewPerson,
-                    ),
-                    (
-                        self.localizer.text(MessageId::AppMenuExportDb),
-                        Message::ExportActiveCemetery,
-                    ),
-                ],
-            ));
-            menu_bar = menu_bar.push(self.app_menu_group(
-                self.localizer.text(MessageId::AppMenuView),
-                [(
-                    self.localizer.text(MessageId::AppMenuPersonDirectory),
-                    Message::OpenPersonDirectory,
-                )],
-            ));
+        if show_app_menu {
+            menu_bar = menu_bar.push(
+                self.app_menu_title(self.localizer.text(MessageId::AppMenuFile), AppMenu::File),
+            );
+            menu_bar = menu_bar.push(
+                self.app_menu_title(self.localizer.text(MessageId::AppMenuView), AppMenu::View),
+            );
         }
 
         menu_bar = menu_bar
             .push(Space::new().width(Length::Fill))
             .push(container(language_menu).align_x(iced::Alignment::End));
 
-        column![
+        let base = column![
             container(menu_bar)
                 .width(Length::Fill)
-                .padding([8, 12])
+                .padding([4, 10])
                 .style(app_menu_bar),
             container(content).width(Length::Fill).height(Length::Fill),
-        ]
-        .into()
+        ];
+
+        if show_app_menu {
+            if let Some(menu) = self.app_menu {
+                let dropdown_x = match menu {
+                    AppMenu::File => 10.0,
+                    AppMenu::View => 56.0,
+                };
+
+                return stack![base]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .push(
+                        pin(opaque(self.app_menu_dropdown(menu)))
+                            .x(dropdown_x)
+                            .y(31.0),
+                    )
+                    .into();
+            }
+        }
+
+        base.into()
     }
 
-    fn app_menu_group<'a, const N: usize>(
-        &'a self,
-        label: String,
-        actions: [(String, Message); N],
-    ) -> Element<'a, Message> {
-        let mut group = row![
-            container(text(label).size(12).style(|_| text::Style {
-                color: Some(Color::from_rgb8(171, 215, 213)),
-            }))
-            .padding([0, 4])
-            .align_y(iced::Alignment::Center)
-        ]
-        .spacing(6)
-        .align_y(iced::Alignment::Center);
+    fn app_menu_title<'a>(&'a self, label: String, menu: AppMenu) -> Element<'a, Message> {
+        button(text(label).size(13))
+            .padding([3, 9])
+            .style(move |theme, status| {
+                app_menu_title_button(theme, status, self.app_menu == Some(menu))
+            })
+            .on_press(Message::ToggleAppMenu(menu))
+            .into()
+    }
+
+    fn app_menu_dropdown<'a>(&'a self, menu: AppMenu) -> Element<'a, Message> {
+        let mut items = column![]
+            .spacing(1)
+            .padding([5, 0])
+            .width(Length::Fixed(190.0));
+
+        let actions: Vec<(String, Message)> = match menu {
+            AppMenu::File => vec![
+                (
+                    self.localizer.text(MessageId::AppMenuNewPerson),
+                    Message::NewPerson,
+                ),
+                (
+                    self.localizer.text(MessageId::AppMenuExportDb),
+                    Message::ExportActiveCemetery,
+                ),
+            ],
+            AppMenu::View => vec![(
+                self.localizer.text(MessageId::AppMenuPersonDirectory),
+                Message::OpenPersonDirectory,
+            )],
+        };
 
         for (label, message) in actions {
-            group = group.push(
-                button(text(label).size(12))
-                    .padding([5, 10])
-                    .style(app_menu_button)
+            items = items.push(
+                button(text(label).size(13))
+                    .width(Length::Fill)
+                    .padding([6, 12])
+                    .style(app_menu_item_button)
                     .on_press(message),
             );
         }
 
-        container(group)
-            .padding([3, 4])
-            .style(app_menu_group)
+        container(items)
+            .padding([2, 0])
+            .style(app_menu_dropdown)
             .into()
     }
 
@@ -838,9 +887,9 @@ fn is_command_shortcut(event: &keyboard::Event, character: char) -> bool {
 
 fn app_menu_bar(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(8, 31, 34))),
+        background: Some(Background::Color(Color::from_rgb8(10, 35, 38))),
         border: Border {
-            color: Color::from_rgb8(38, 118, 121),
+            color: Color::from_rgb8(45, 112, 116),
             width: 0.0,
             radius: 0.0.into(),
         },
@@ -848,49 +897,62 @@ fn app_menu_bar(_: &Theme) -> container::Style {
     }
 }
 
-fn app_menu_group(_: &Theme) -> container::Style {
+fn app_menu_dropdown(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(13, 48, 52))),
+        background: Some(Background::Color(Color::from_rgb8(14, 45, 49))),
         border: Border {
-            color: Color::from_rgb8(39, 126, 130),
+            color: Color::from_rgb8(83, 151, 153),
             width: 1.0,
-            radius: 7.0.into(),
+            radius: 4.0.into(),
         },
         shadow: Shadow {
-            color: Color::from_rgba8(0, 0, 0, 0.25),
-            offset: Vector::new(0.0, 1.0),
-            blur_radius: 3.0,
+            color: Color::from_rgba8(0, 0, 0, 0.4),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 10.0,
         },
         ..Default::default()
     }
 }
 
-fn app_menu_button(_: &Theme, status: button::Status) -> button::Style {
+fn app_menu_title_button(_: &Theme, status: button::Status, active: bool) -> button::Style {
     let pressed = status == button::Status::Pressed;
     let hovered = status == button::Status::Hovered;
 
     button::Style {
-        background: Some(Background::Color(if pressed {
-            Color::from_rgb8(34, 125, 128)
+        background: if active || pressed {
+            Some(Background::Color(Color::from_rgb8(31, 92, 96)))
         } else if hovered {
-            Color::from_rgb8(42, 146, 150)
+            Some(Background::Color(Color::from_rgb8(22, 64, 68)))
         } else {
-            Color::from_rgb8(21, 78, 82)
-        })),
+            None
+        },
         text_color: Color::WHITE,
         border: Border {
-            color: Color::from_rgb8(67, 174, 177),
-            width: 1.0,
-            radius: 5.0.into(),
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 3.0.into(),
         },
-        shadow: Shadow {
-            color: Color::from_rgba8(0, 0, 0, 0.18),
-            offset: if pressed {
-                Vector::new(0.0, 0.5)
-            } else {
-                Vector::new(0.0, 1.0)
-            },
-            blur_radius: 2.0,
+        ..Default::default()
+    }
+}
+
+fn app_menu_item_button(_: &Theme, status: button::Status) -> button::Style {
+    let pressed = status == button::Status::Pressed;
+    let hovered = status == button::Status::Hovered;
+
+    button::Style {
+        background: if pressed {
+            Some(Background::Color(Color::from_rgb8(35, 112, 116)))
+        } else if hovered {
+            Some(Background::Color(Color::from_rgb8(29, 91, 96)))
+        } else {
+            None
+        },
+        text_color: Color::WHITE,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 2.0.into(),
         },
         ..Default::default()
     }

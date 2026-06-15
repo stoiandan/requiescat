@@ -1,7 +1,8 @@
 use iced::Vector;
 
 use super::{
-    CemeteryMap, Grave, GraveId, GraveRectangle, Person, PersonDate, PersonDirectory, PersonId,
+    CemeteryMap, Grave, GraveColor, GraveId, GraveRectangle, Person, PersonDate, PersonDirectory,
+    PersonId,
 };
 
 #[derive(Debug, Default)]
@@ -27,8 +28,12 @@ impl Cemetery {
         }
     }
 
-    pub fn add_grave(&mut self, rectangle: GraveRectangle) -> GraveId {
-        self.map.add_grave(rectangle)
+    pub fn add_grave_with_color(
+        &mut self,
+        rectangle: GraveRectangle,
+        color: GraveColor,
+    ) -> GraveId {
+        self.map.add_grave_with_color(rectangle, color)
     }
 
     pub fn erase_grave(&mut self, id: GraveId) {
@@ -138,7 +143,7 @@ mod tests {
     #[test]
     fn assign_person_to_existing_grave_links_person_and_grave() {
         let mut cemetery = Cemetery::default();
-        let grave_id = cemetery.add_grave(rectangle());
+        let grave_id = cemetery.add_grave_with_color(rectangle(), GraveColor::default());
         let person_id = create_person(&mut cemetery, None);
 
         cemetery.assign_person_to_grave(person_id, grave_id);
@@ -156,8 +161,8 @@ mod tests {
     #[test]
     fn erase_grave_unassigns_people_in_that_grave() {
         let mut cemetery = Cemetery::default();
-        let removed_grave = cemetery.add_grave(rectangle());
-        let remaining_grave = cemetery.add_grave(rectangle());
+        let removed_grave = cemetery.add_grave_with_color(rectangle(), GraveColor::default());
+        let remaining_grave = cemetery.add_grave_with_color(rectangle(), GraveColor::default());
         let removed_person = create_person(&mut cemetery, Some(removed_grave));
         let remaining_person = create_person(&mut cemetery, Some(remaining_grave));
 
