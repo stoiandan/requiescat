@@ -9,6 +9,7 @@ use iced::widget::{
 };
 use iced::{Background, Border, Color, Element, Length, Point, Renderer, Shadow, Theme, Vector};
 
+use crate::localization::{Localizer, MessageId};
 use crate::models::{Cemetery, GraveId, GraveRectangle, Person, PersonDate, PersonId};
 
 #[derive(Default)]
@@ -204,12 +205,23 @@ impl MapEditor {
         }
     }
 
-    pub fn view<'a>(&'a self, save_status: Option<&'a str>) -> Element<'a, Message> {
+    pub fn view<'a>(
+        &'a self,
+        localizer: &'a Localizer,
+        save_status: Option<String>,
+    ) -> Element<'a, Message> {
         let selected_grave = self.selected_grave();
-        let mut map_row = row![canvas(self).height(Length::Fill).width(Length::Fill)];
+        let mut map_row = row![
+            canvas(LocalizedMapCanvas {
+                editor: self,
+                localizer,
+            })
+            .height(Length::Fill)
+            .width(Length::Fill)
+        ];
 
         if let Some(grave_id) = selected_grave {
-            map_row = map_row.push(self.side_panel(grave_id));
+            map_row = map_row.push(self.side_panel(localizer, grave_id));
         }
 
         let mut footer = row![self.toolbar.view().map(Message::ToolBarAction)]
@@ -236,9 +248,11 @@ impl MapEditor {
             .into()
     }
 
-    pub fn person_directory_view(&self) -> Element<'_, Message> {
+    pub fn person_directory_view<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, Message> {
         container(scrollable(
-            column![self.person_directory()].spacing(16).padding(14),
+            column![self.person_directory(localizer)]
+                .spacing(16)
+                .padding(14),
         ))
         .width(Length::Fill)
         .height(Length::Fill)
@@ -249,13 +263,20 @@ impl MapEditor {
         .into()
     }
 
-    pub fn person_details_view(&self, person_id: PersonId) -> Element<'_, Message> {
+    pub fn person_details_view<'a>(
+        &'a self,
+        localizer: &'a Localizer,
+        person_id: PersonId,
+    ) -> Element<'a, Message> {
         let content = if let Some(person) = self.cemetery.person(person_id) {
-            column![text("Person").size(20), self.person_editor(person)]
-                .spacing(12)
-                .padding(16)
+            column![
+                text(localizer.text(MessageId::Person)).size(20),
+                self.person_editor(localizer, person)
+            ]
+            .spacing(12)
+            .padding(16)
         } else {
-            column![text("Person not found").size(20)].padding(16)
+            column![text(localizer.text(MessageId::PersonNotFound)).size(20)].padding(16)
         };
 
         container(content)
@@ -268,14 +289,16 @@ impl MapEditor {
             .into()
     }
 
-    pub fn new_person_view(&self) -> Element<'_, Message> {
+    pub fn new_person_view<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, Message> {
         let grave_label = self
             .new_person
             .grave_id
-            .map(|grave_id| format!("Will be added to grave {}", grave_id))
-            .unwrap_or_else(|| "Will be created unassigned".to_owned());
+            .map(|grave_id| {
+                localizer.value(MessageId::WillAddToGrave, "grave", grave_id.to_string())
+            })
+            .unwrap_or_else(|| localizer.text(MessageId::WillCreateUnassigned));
 
-        let submit = button(text("Add person")).width(Length::Fill);
+        let submit = button(text(localizer.text(MessageId::AddPerson))).width(Length::Fill);
         let submit = if self.can_submit_new_person() {
             submit.on_press(Message::SubmitNewPerson)
         } else {
@@ -284,24 +307,30 @@ impl MapEditor {
 
         container(
             column![
-                text("New Person").size(20),
+                text(localizer.text(MessageId::NewPersonTitle)).size(20),
                 text(grave_label).size(12).style(|_| text::Style {
                     color: Some(iced::Color::from_rgb8(190, 220, 218)),
                 }),
-                text_input("First name", &self.new_person.first_name)
-                    .on_input(Message::NewPersonFirstNameChanged)
-                    .padding(8),
-                text_input("Last name", &self.new_person.last_name)
-                    .on_input(Message::NewPersonLastNameChanged)
-                    .padding(8),
                 text_input(
-                    "Date of birth, e.g. 30-04-1996",
+                    &localizer.text(MessageId::FirstName),
+                    &self.new_person.first_name
+                )
+                .on_input(Message::NewPersonFirstNameChanged)
+                .padding(8),
+                text_input(
+                    &localizer.text(MessageId::LastName),
+                    &self.new_person.last_name
+                )
+                .on_input(Message::NewPersonLastNameChanged)
+                .padding(8),
+                text_input(
+                    &localizer.text(MessageId::DateOfBirthExample),
                     &self.new_person.date_of_birth
                 )
                 .on_input(Message::NewPersonDateOfBirthChanged)
                 .padding(8),
                 text_input(
-                    "Date of decease, e.g. 30-04-1996",
+                    &localizer.text(MessageId::DateOfDeceaseExample),
                     &self.new_person.date_of_decease
                 )
                 .on_input(Message::NewPersonDateOfDeceaseChanged)
@@ -320,9 +349,13 @@ impl MapEditor {
         .into()
     }
 
-    fn side_panel(&self, grave_id: GraveId) -> Element<'_, Message> {
+    fn side_panel<'a>(
+        &'a self,
+        localizer: &'a Localizer,
+        grave_id: GraveId,
+    ) -> Element<'a, Message> {
         container(scrollable(
-            column![self.grave_details(grave_id)]
+            column![self.grave_details(localizer, grave_id)]
                 .spacing(16)
                 .padding(14),
         ))
@@ -340,41 +373,57 @@ impl MapEditor {
         .into()
     }
 
-    fn grave_details(&self, grave_id: GraveId) -> Element<'_, Message> {
-        let mut content = column![text(format!("Grave {}", grave_id)).size(18)].spacing(8);
+    fn grave_details<'a>(
+        &'a self,
+        localizer: &'a Localizer,
+        grave_id: GraveId,
+    ) -> Element<'a, Message> {
+        let mut content = column![
+            text(localizer.value(MessageId::Grave, "grave", grave_id.to_string())).size(18)
+        ]
+        .spacing(8);
 
         let people = self.cemetery.people_in_grave(grave_id);
 
         if people.is_empty() {
-            content = content.push(text("No persons associated yet").style(|_| text::Style {
-                color: Some(iced::Color::from_rgb8(190, 220, 218)),
-            }));
+            content = content.push(text(localizer.text(MessageId::NoPersonsAssociated)).style(
+                |_| text::Style {
+                    color: Some(iced::Color::from_rgb8(190, 220, 218)),
+                },
+            ));
         } else {
             for person in people {
-                content = content.push(self.person_editor(person));
+                content = content.push(self.person_editor(localizer, person));
             }
         }
 
         container(content).into()
     }
 
-    fn person_directory(&self) -> Element<'_, Message> {
+    fn person_directory<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, Message> {
         let mut content = column![
-            text("Persons").size(18),
-            text_input("Search names or dates", &self.person_search)
-                .on_input(Message::PersonSearchChanged)
-                .padding(8)
+            text(localizer.text(MessageId::Persons)).size(18),
+            text_input(
+                &localizer.text(MessageId::SearchPeople),
+                &self.person_search
+            )
+            .on_input(Message::PersonSearchChanged)
+            .padding(8)
         ]
         .spacing(8);
 
         for person in self.cemetery.search_people(&self.person_search) {
-            content = content.push(self.person_result(person));
+            content = content.push(self.person_result(localizer, person));
         }
 
         container(content).into()
     }
 
-    fn person_result(&self, person: &Person) -> Element<'_, Message> {
+    fn person_result<'a>(
+        &'a self,
+        localizer: &'a Localizer,
+        person: &'a Person,
+    ) -> Element<'a, Message> {
         let id = person.id();
         let selected_grave = self.selected_grave();
 
@@ -397,16 +446,20 @@ impl MapEditor {
         let mut content = row![info].spacing(8);
 
         if person.grave_id().is_some() {
-            content = content.push(button(text("Go to grave")).on_press(Message::SelectPerson(id)));
+            content = content.push(
+                button(text(localizer.text(MessageId::GoToGrave)))
+                    .on_press(Message::SelectPerson(id)),
+            );
         }
 
         if selected_grave.is_some() {
             let assignment_action = if person.grave_id().is_some() {
-                button(text("Unassign"))
+                button(text(localizer.text(MessageId::Unassign)))
                     .on_press(Message::UnassignPersonFromGrave(id))
                     .style(danger_button)
             } else {
-                button(text("Assign")).on_press(Message::AssignPersonToSelectedGrave(id))
+                button(text(localizer.text(MessageId::Assign)))
+                    .on_press(Message::AssignPersonToSelectedGrave(id))
             };
 
             content = content.push(assignment_action);
@@ -427,7 +480,11 @@ impl MapEditor {
             .into()
     }
 
-    fn person_editor(&self, person: &Person) -> Element<'_, Message> {
+    fn person_editor<'a>(
+        &'a self,
+        localizer: &'a Localizer,
+        person: &'a Person,
+    ) -> Element<'a, Message> {
         let id = person.id();
         let edits = self.person_edits.get(&id);
         let first_name = edits
@@ -445,7 +502,7 @@ impl MapEditor {
 
         let details = column![
             text(person.display_name()).size(16),
-            text(format!("Born {}", person.date_of_birth()))
+            text(localizer.value(MessageId::Born, "date", person.date_of_birth()))
                 .size(12)
                 .style(|_| text::Style {
                     color: Some(iced::Color::from_rgb8(190, 220, 218)),
@@ -455,7 +512,7 @@ impl MapEditor {
 
         let details = if let Some(grave_id) = person.grave_id() {
             details.push(
-                text(format!("Grave {}", grave_id))
+                text(localizer.value(MessageId::Grave, "grave", grave_id.to_string()))
                     .size(12)
                     .style(|_| text::Style {
                         color: Some(iced::Color::from_rgb8(190, 220, 218)),
@@ -468,16 +525,16 @@ impl MapEditor {
         container(
             column![
                 details,
-                text_input("First name", first_name)
+                text_input(&localizer.text(MessageId::FirstName), first_name)
                     .on_input(move |value| Message::UpdatePersonFirstName(id, value))
                     .padding(7),
-                text_input("Last name", last_name)
+                text_input(&localizer.text(MessageId::LastName), last_name)
                     .on_input(move |value| Message::UpdatePersonLastName(id, value))
                     .padding(7),
-                text_input("Date of birth", date_of_birth)
+                text_input(&localizer.text(MessageId::DateOfBirth), date_of_birth)
                     .on_input(move |value| Message::UpdatePersonDateOfBirth(id, value))
                     .padding(7),
-                text_input("Date of decease", date_of_decease)
+                text_input(&localizer.text(MessageId::DateOfDecease), date_of_decease)
                     .on_input(move |value| Message::UpdatePersonDateOfDecease(id, value))
                     .padding(7)
             ]
@@ -828,7 +885,12 @@ impl CanvasState {
     }
 }
 
-impl canvas::Program<Message> for MapEditor {
+struct LocalizedMapCanvas<'a> {
+    editor: &'a MapEditor,
+    localizer: &'a Localizer,
+}
+
+impl canvas::Program<Message> for LocalizedMapCanvas<'_> {
     type State = CanvasState;
 
     fn draw(
@@ -841,16 +903,20 @@ impl canvas::Program<Message> for MapEditor {
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
 
-        if self.show_grid() {
-            drawing::grid(&mut frame, &self.camera, bounds);
+        if self.editor.show_grid() {
+            drawing::grid(&mut frame, &self.editor.camera, bounds);
         }
 
-        drawing::grave_preview(&mut frame, state, &self.camera);
+        drawing::grave_preview(&mut frame, state, &self.editor.camera);
         drawing::graves(
             &mut frame,
-            &self.cemetery,
-            &self.camera,
-            self.selected_grave,
+            &self.editor.cemetery,
+            &self.editor.camera,
+            self.editor.selected_grave,
+            |grave_id| {
+                self.localizer
+                    .value(MessageId::GraveCanvas, "grave", grave_id.to_string())
+            },
         );
 
         vec![frame.into_geometry()]
@@ -863,7 +929,7 @@ impl canvas::Program<Message> for MapEditor {
         bounds: iced::Rectangle,
         cursor: iced::mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
-        interaction::handle_event(self, state, event, bounds, cursor)
+        interaction::handle_event(self.editor, state, event, bounds, cursor)
     }
 
     fn mouse_interaction(
@@ -872,7 +938,7 @@ impl canvas::Program<Message> for MapEditor {
         _bounds: iced::Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> iced::mouse::Interaction {
-        match self.selected_tool() {
+        match self.editor.selected_tool() {
             Tool::Select => iced::mouse::Interaction::Pointer,
             Tool::Draw | Tool::StampGrave => iced::mouse::Interaction::Crosshair,
             Tool::Grab => match state.drag {

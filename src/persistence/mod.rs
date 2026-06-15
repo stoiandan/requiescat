@@ -475,7 +475,7 @@ impl TryFrom<PersonRow> for Person {
     }
 }
 
-fn application_data_directory() -> Result<PathBuf, PersistenceError> {
+pub(crate) fn application_data_directory() -> Result<PathBuf, PersistenceError> {
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var_os("HOME").ok_or_else(|| {

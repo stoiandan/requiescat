@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+fluent-bundle = "0.16.0"
 iced = { version = "0.14.0", features = ["canvas"] }
 rfd = "0.15.4"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
+unic-langid = { version = "0.9.6", features = ["macros"] }

@@ -101,6 +101,7 @@ pub fn graves(
     cemetery: &Cemetery,
     camera: &Camera,
     selected_grave: Option<GraveId>,
+    grave_label: impl Fn(GraveId) -> String,
 ) {
     for grave in cemetery.graves() {
         let rectangle = grave.rectangle();
@@ -110,8 +111,8 @@ pub fn graves(
         frame.fill_rectangle(top_left, size, iced::Color::from_rgb(0.65, 0.121, 0.157));
         grave_labels(
             frame,
-            grave.id(),
             grave_label_rows(cemetery, grave.id()),
+            grave_label(grave.id()),
             top_left,
             size,
         );
@@ -131,8 +132,8 @@ pub fn graves(
 
 fn grave_labels(
     frame: &mut canvas::Frame,
-    grave_id: GraveId,
     rows: Vec<String>,
+    fallback: String,
     top_left: Point,
     size: iced::Size,
 ) {
@@ -147,7 +148,7 @@ fn grave_labels(
         return;
     }
 
-    let rows = visible_label_rows(rows, format!("grave {}", grave_id), max_rows);
+    let rows = visible_label_rows(rows, fallback, max_rows);
     let max_width = (size.width - PADDING * 2.0).max(0.0);
     let max_characters = label_character_capacity(max_width, font_size);
 

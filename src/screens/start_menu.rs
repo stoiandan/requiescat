@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
+use crate::localization::{Localizer, MessageId};
 use crate::persistence::CemeteryFile;
 
 const BACKGROUND: Color = Color::from_rgb(0.035, 0.105, 0.11);
@@ -27,25 +28,25 @@ pub enum Message {
 }
 
 pub fn view<'a>(
+    localizer: &'a Localizer,
     cemeteries: &'a [CemeteryFile],
     selected: Option<&Path>,
     show_cemeteries: bool,
     show_create_cemetery: bool,
     new_cemetery_name: &'a str,
-    status: Option<&'a str>,
+    status: Option<String>,
 ) -> Element<'a, Message> {
     if show_create_cemetery {
-        return create_cemetery_form(new_cemetery_name, status);
+        return create_cemetery_form(localizer, new_cemetery_name, status);
     }
 
     if show_cemeteries {
-        return cemetery_list(cemeteries, selected, status);
+        return cemetery_list(localizer, cemeteries, selected, status);
     }
 
     let library_summary = match cemeteries.len() {
-        0 => "Your library is empty".to_owned(),
-        1 => "1 cemetery in your library".to_owned(),
-        count => format!("{count} cemeteries in your library"),
+        0 => localizer.text(MessageId::LibraryEmpty),
+        count => localizer.count(MessageId::LibraryCount, count),
     };
 
     let brand = container(
@@ -69,11 +70,11 @@ pub fn view<'a>(
             .spacing(12)
             .align_y(Alignment::Center),
             column![
-                text("Cemetery records,\ncarefully preserved.")
+                text(localizer.text(MessageId::BrandTagline))
                     .size(24)
                     .line_height(1.15)
                     .color(TEXT_PRIMARY),
-                text("Manage maps and records from one secure library.")
+                text(localizer.text(MessageId::BrandDescription))
                     .size(13)
                     .line_height(1.4)
                     .color(TEXT_MUTED)
@@ -93,11 +94,14 @@ pub fn view<'a>(
 
     let (heading, supporting_text) = if cemeteries.is_empty() {
         (
-            "Set up your library",
-            "Create a new cemetery or import an existing one.",
+            localizer.text(MessageId::SetupLibrary),
+            localizer.text(MessageId::SetupLibraryDescription),
         )
     } else {
-        ("Welcome back", "Choose where you would like to continue.")
+        (
+            localizer.text(MessageId::WelcomeBack),
+            localizer.text(MessageId::WelcomeBackDescription),
+        )
     };
 
     let mut action_buttons = column![].spacing(10);
@@ -105,25 +109,29 @@ pub fn view<'a>(
     if cemeteries.is_empty() {
         action_buttons = action_buttons
             .push(menu_button(
-                "Create new cemetery",
+                localizer.text(MessageId::CreateNewCemetery),
                 Message::ShowCreateCemetery,
                 true,
             ))
             .push(menu_button(
-                "Import cemetery",
+                localizer.text(MessageId::ImportCemetery),
                 Message::ImportCemetery,
                 false,
             ));
     } else {
         action_buttons = action_buttons
-            .push(menu_button("Open cemetery", Message::ShowCemeteries, true))
             .push(menu_button(
-                "Create new cemetery",
+                localizer.text(MessageId::OpenCemetery),
+                Message::ShowCemeteries,
+                true,
+            ))
+            .push(menu_button(
+                localizer.text(MessageId::CreateNewCemetery),
                 Message::ShowCreateCemetery,
                 false,
             ))
             .push(menu_button(
-                "Import cemetery",
+                localizer.text(MessageId::ImportCemetery),
                 Message::ImportCemetery,
                 false,
             ));
@@ -132,8 +140,8 @@ pub fn view<'a>(
             let export_label = selected
                 .file_stem()
                 .and_then(|name| name.to_str())
-                .map(|name| format!("Export {name}"))
-                .unwrap_or_else(|| "Export cemetery".to_owned());
+                .map(|name| localizer.value(MessageId::ExportNamedCemetery, "name", name))
+                .unwrap_or_else(|| localizer.text(MessageId::ExportCemetery));
 
             action_buttons =
                 action_buttons.push(menu_button(export_label, Message::ExportSelected, false));
@@ -165,11 +173,19 @@ pub fn view<'a>(
     screen(panel)
 }
 
-fn create_cemetery_form<'a>(name: &'a str, status: Option<&'a str>) -> Element<'a, Message> {
-    let create = button(text("Create cemetery").size(14).align_x(Alignment::Center))
-        .width(Length::Fill)
-        .padding([11, 16])
-        .style(primary_button_style);
+fn create_cemetery_form<'a>(
+    localizer: &'a Localizer,
+    name: &'a str,
+    status: Option<String>,
+) -> Element<'a, Message> {
+    let create = button(
+        text(localizer.text(MessageId::CreateCemetery))
+            .size(14)
+            .align_x(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([11, 16])
+    .style(primary_button_style);
     let create = if name.trim().is_empty() {
         create
     } else {
@@ -178,17 +194,23 @@ fn create_cemetery_form<'a>(name: &'a str, status: Option<&'a str>) -> Element<'
 
     let content = column![
         column![
-            text("Create new cemetery").size(24).color(TEXT_PRIMARY),
-            text("Enter a name for the cemetery.")
+            text(localizer.text(MessageId::CreateNewCemetery))
+                .size(24)
+                .color(TEXT_PRIMARY),
+            text(localizer.text(MessageId::CreateCemeteryDescription))
                 .size(13)
                 .color(TEXT_MUTED)
         ]
         .spacing(6),
-        text_input("Cemetery name", name)
+        text_input(&localizer.text(MessageId::CemeteryName), name)
             .on_input(Message::CemeteryNameChanged)
             .on_submit(Message::SubmitCreateCemetery)
             .padding(11),
-        column![create, menu_button("Back to menu", Message::Back, false)].spacing(10),
+        column![
+            create,
+            menu_button(localizer.text(MessageId::BackToMenu), Message::Back, false)
+        ]
+        .spacing(10),
         status_view(status)
     ]
     .spacing(20);
@@ -203,9 +225,10 @@ fn create_cemetery_form<'a>(name: &'a str, status: Option<&'a str>) -> Element<'
 }
 
 fn cemetery_list<'a>(
+    localizer: &'a Localizer,
     cemeteries: &'a [CemeteryFile],
     selected: Option<&Path>,
-    status: Option<&'a str>,
+    status: Option<String>,
 ) -> Element<'a, Message> {
     let header = row![
         button(text("<").size(18))
@@ -215,8 +238,12 @@ fn cemetery_list<'a>(
             .padding(0)
             .style(quiet_button_style),
         column![
-            text("Cemetery library").size(22).color(TEXT_PRIMARY),
-            text("Choose a cemetery to open").size(13).color(TEXT_MUTED)
+            text(localizer.text(MessageId::CemeteryLibrary))
+                .size(22)
+                .color(TEXT_PRIMARY),
+            text(localizer.text(MessageId::ChooseCemetery))
+                .size(13)
+                .color(TEXT_MUTED)
         ]
         .spacing(4)
     ]
@@ -229,11 +256,13 @@ fn cemetery_list<'a>(
         entries = entries.push(
             container(
                 column![
-                    text("No cemeteries yet").size(18).color(TEXT_PRIMARY),
-                    text("Import a cemetery database to add it to your library.")
+                    text(localizer.text(MessageId::NoCemeteries))
+                        .size(18)
+                        .color(TEXT_PRIMARY),
+                    text(localizer.text(MessageId::NoCemeteriesDescription))
                         .size(13)
                         .color(TEXT_MUTED),
-                    button(text("Import cemetery"))
+                    button(text(localizer.text(MessageId::ImportCemetery)))
                         .on_press(Message::ImportCemetery)
                         .padding([10, 16])
                         .style(primary_button_style)
@@ -260,7 +289,8 @@ fn cemetery_list<'a>(
                 .path()
                 .file_name()
                 .and_then(|name| name.to_str())
-                .unwrap_or("SQLite cemetery");
+                .map(str::to_owned)
+                .unwrap_or_else(|| localizer.text(MessageId::SqliteCemetery));
 
             entries = entries.push(
                 container(
@@ -271,7 +301,7 @@ fn cemetery_list<'a>(
                         ]
                         .spacing(3)
                         .width(Length::Fill),
-                        button(text("Open"))
+                        button(text(localizer.text(MessageId::Open)))
                             .on_press(Message::OpenCemetery(cemetery.path().to_owned()))
                             .padding([8, 14])
                             .style(primary_button_style)
@@ -337,7 +367,7 @@ fn menu_button<'a>(
         .on_press(message)
 }
 
-fn status_view<'a>(status: Option<&'a str>) -> Element<'a, Message> {
+fn status_view<'a>(status: Option<String>) -> Element<'a, Message> {
     match status {
         Some(status) => container(text(status).size(12).color(TEXT_MUTED))
             .width(Length::Fill)

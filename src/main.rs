@@ -1,13 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod localization;
 mod models;
 mod persistence;
 mod screens;
 
 use std::path::PathBuf;
 
-use iced::widget::{container, text};
+use iced::widget::{column, container, pick_list, row, text};
 use iced::{Element, Length, Size, Subscription, Task, keyboard, window};
+use localization::{Language, Localizer, MessageId};
 use persistence::{CemeteryFile, CemeteryLibrary, CemeteryRepository, SqliteCemeteryRepository};
 use screens::{
     MapEditor, MapEditorMessage, MapEditorUpdateOutcome, StartMenuMessage, start_menu_view,
@@ -28,6 +30,7 @@ enum Message {
     NewPersonWindowOpened(window::Id),
     WindowClosed(window::Id),
     Keyboard(keyboard::Event),
+    LanguageSelected(Language),
     StartMenu(StartMenuMessage),
     ImportPathChosen(Option<PathBuf>),
     ExportPathChosen(Option<PathBuf>),
@@ -49,16 +52,62 @@ enum SaveState {
 }
 
 impl SaveState {
-    fn label(&self) -> Option<&str> {
+    fn label(&self, localizer: &Localizer) -> Option<String> {
         match self {
             Self::Clean => None,
-            Self::Dirty => Some("Unsaved changes"),
-            Self::Failed(message) => Some(message),
+            Self::Dirty => Some(localizer.text(MessageId::UnsavedChanges)),
+            Self::Failed(error) => {
+                Some(localizer.value(MessageId::SaveFailed, "error", error.as_str()))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum AppStatus {
+    RawError(String),
+    LibraryUnavailable,
+    CemeteryImported,
+    CouldNotLoadCemetery(String),
+    CouldNotImportCemetery(String),
+    CouldNotCreateCemetery(String),
+    ExportSaveFailed,
+    CemeteryExported,
+    CouldNotExportCemetery(String),
+    CouldNotRefreshCemeteries(String),
+}
+
+impl AppStatus {
+    fn localized(&self, localizer: &Localizer) -> String {
+        match self {
+            Self::RawError(error) => error.clone(),
+            Self::LibraryUnavailable => localizer.text(MessageId::LibraryUnavailable),
+            Self::CemeteryImported => localizer.text(MessageId::CemeteryImported),
+            Self::CouldNotLoadCemetery(error) => {
+                localizer.value(MessageId::CouldNotLoadCemetery, "error", error.as_str())
+            }
+            Self::CouldNotImportCemetery(error) => {
+                localizer.value(MessageId::CouldNotImportCemetery, "error", error.as_str())
+            }
+            Self::CouldNotCreateCemetery(error) => {
+                localizer.value(MessageId::CouldNotCreateCemetery, "error", error.as_str())
+            }
+            Self::ExportSaveFailed => localizer.text(MessageId::ExportSaveFailed),
+            Self::CemeteryExported => localizer.text(MessageId::CemeteryExported),
+            Self::CouldNotExportCemetery(error) => {
+                localizer.value(MessageId::CouldNotExportCemetery, "error", error.as_str())
+            }
+            Self::CouldNotRefreshCemeteries(error) => localizer.value(
+                MessageId::CouldNotRefreshCemeteries,
+                "error",
+                error.as_str(),
+            ),
         }
     }
 }
 
 struct Requiescat {
+    localizer: Localizer,
     editor: MapEditor,
     main_screen: MainScreen,
     main_window: Option<window::Id>,
@@ -72,7 +121,7 @@ struct Requiescat {
     show_cemeteries: bool,
     show_create_cemetery: bool,
     new_cemetery_name: String,
-    status: Option<String>,
+    status: Option<AppStatus>,
     save_state: SaveState,
 }
 
@@ -83,10 +132,18 @@ impl Requiescat {
                 let result = library.cemeteries();
                 match result {
                     Ok(cemeteries) => (Some(library), cemeteries, None),
-                    Err(error) => (Some(library), Vec::new(), Some(error.to_string())),
+                    Err(error) => (
+                        Some(library),
+                        Vec::new(),
+                        Some(AppStatus::RawError(error.to_string())),
+                    ),
                 }
             }
-            Err(error) => (None, Vec::new(), Some(error.to_string())),
+            Err(error) => (
+                None,
+                Vec::new(),
+                Some(AppStatus::RawError(error.to_string())),
+            ),
         };
 
         let (window_id, open) = window::open(window::Settings {
@@ -97,6 +154,7 @@ impl Requiescat {
 
         (
             Self {
+                localizer: Localizer::default(),
                 editor: MapEditor::default(),
                 main_screen: MainScreen::StartMenu,
                 main_window: Some(window_id),
@@ -169,6 +227,9 @@ impl Requiescat {
                     return self.open_person_directory();
                 }
             }
+            Message::LanguageSelected(language) => {
+                self.localizer.set_language(language);
+            }
             Message::StartMenu(message) => {
                 return self.update_start_menu(message);
             }
@@ -215,54 +276,66 @@ impl Requiescat {
     }
 
     fn view(&self, window: window::Id) -> Element<'_, Message> {
-        if Some(window) == self.person_directory_window {
-            self.editor.person_directory_view().map(Message::Editor)
+        let content = if Some(window) == self.person_directory_window {
+            self.editor
+                .person_directory_view(&self.localizer)
+                .map(Message::Editor)
         } else if Some(window) == self.new_person_window {
-            self.editor.new_person_view().map(Message::Editor)
+            self.editor
+                .new_person_view(&self.localizer)
+                .map(Message::Editor)
         } else if let Some((_, person_id)) = self
             .person_detail_windows
             .iter()
             .find(|(window_id, _)| *window_id == window)
         {
             self.editor
-                .person_details_view(*person_id)
+                .person_details_view(&self.localizer, *person_id)
                 .map(Message::Editor)
         } else if Some(window) == self.main_window {
+            let status = self
+                .status
+                .as_ref()
+                .map(|status| status.localized(&self.localizer));
+
             match self.main_screen {
                 MainScreen::StartMenu => start_menu_view(
+                    &self.localizer,
                     &self.cemeteries,
                     self.selected_cemetery.as_deref(),
                     self.show_cemeteries,
                     self.show_create_cemetery,
                     &self.new_cemetery_name,
-                    self.status.as_deref(),
+                    status,
                 )
                 .map(Message::StartMenu),
                 MainScreen::MapEditor => self
                     .editor
-                    .view(self.save_state.label())
+                    .view(&self.localizer, self.save_state.label(&self.localizer))
                     .map(Message::Editor),
             }
         } else {
-            container(text("Unknown window"))
+            container(text(self.localizer.text(MessageId::UnknownWindow)))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .center(Length::Fill)
                 .into()
-        }
+        };
+
+        self.with_language_menu(content)
     }
 
     fn title(&self, window: window::Id) -> String {
         if Some(window) == self.person_directory_window {
-            "Person Directory".to_owned()
+            self.localizer.text(MessageId::PersonDirectoryTitle)
         } else if Some(window) == self.new_person_window {
-            "New Person".to_owned()
+            self.localizer.text(MessageId::NewPersonTitle)
         } else if self
             .person_detail_windows
             .iter()
             .any(|(window_id, _)| *window_id == window)
         {
-            "Person Details".to_owned()
+            self.localizer.text(MessageId::PersonDetailsTitle)
         } else if self.main_screen == MainScreen::MapEditor {
             self.active_database
                 .as_deref()
@@ -271,8 +344,32 @@ impl Requiescat {
                 .map(|name| format!("{name} - Requiescat"))
                 .unwrap_or_else(|| "Requiescat".to_owned())
         } else {
-            "Requiescat - Cemetery Library".to_owned()
+            self.localizer.text(MessageId::CemeteryLibraryTitle)
         }
+    }
+
+    fn with_language_menu<'a>(&'a self, content: Element<'a, Message>) -> Element<'a, Message> {
+        let language_menu = row![
+            text(self.localizer.text(MessageId::LanguageMenu)).size(12),
+            pick_list(
+                Language::ALL,
+                Some(self.localizer.language()),
+                Message::LanguageSelected,
+            )
+            .text_size(12)
+            .padding([5, 8]),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+
+        column![
+            container(language_menu)
+                .width(Length::Fill)
+                .align_x(iced::Alignment::End)
+                .padding([6, 10]),
+            container(content).width(Length::Fill).height(Length::Fill),
+        ]
+        .into()
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -369,10 +466,11 @@ impl Requiescat {
                 }
             }
             StartMenuMessage::ImportCemetery => {
+                let filter = self.localizer.text(MessageId::FileFilterSqliteCemetery);
                 return Task::perform(
-                    async {
+                    async move {
                         rfd::AsyncFileDialog::new()
-                            .add_filter("SQLite cemetery", &["sqlite", "sqlite3", "db"])
+                            .add_filter(&filter, &["sqlite", "sqlite3", "db"])
                             .pick_file()
                             .await
                             .map(|file| file.path().to_owned())
@@ -389,10 +487,11 @@ impl Requiescat {
                     .unwrap_or("Cemetery.sqlite")
                     .to_owned();
 
+                let filter = self.localizer.text(MessageId::FileFilterSqliteCemetery);
                 return Task::perform(
                     async move {
                         rfd::AsyncFileDialog::new()
-                            .add_filter("SQLite cemetery", &["sqlite"])
+                            .add_filter(&filter, &["sqlite"])
                             .set_file_name(&file_name)
                             .save_file()
                             .await
@@ -424,7 +523,7 @@ impl Requiescat {
                     .unwrap_or_else(Task::none)
             }
             Err(error) => {
-                self.status = Some(format!("Could not load cemetery: {error}"));
+                self.status = Some(AppStatus::CouldNotLoadCemetery(error.to_string()));
                 Task::none()
             }
         }
@@ -432,7 +531,7 @@ impl Requiescat {
 
     fn import_cemetery(&mut self, source: PathBuf) {
         let Some(library) = &self.library else {
-            self.status = Some("The cemetery library is unavailable.".to_owned());
+            self.status = Some(AppStatus::LibraryUnavailable);
             return;
         };
 
@@ -441,17 +540,17 @@ impl Requiescat {
                 self.selected_cemetery = Some(imported);
                 self.show_cemeteries = true;
                 self.refresh_cemeteries();
-                self.status = Some("Cemetery imported.".to_owned());
+                self.status = Some(AppStatus::CemeteryImported);
             }
             Err(error) => {
-                self.status = Some(format!("Could not import cemetery: {error}"));
+                self.status = Some(AppStatus::CouldNotImportCemetery(error.to_string()));
             }
         }
     }
 
     fn create_cemetery(&mut self) -> Task<Message> {
         let Some(library) = &self.library else {
-            self.status = Some("The cemetery library is unavailable.".to_owned());
+            self.status = Some(AppStatus::LibraryUnavailable);
             return Task::none();
         };
 
@@ -464,7 +563,7 @@ impl Requiescat {
                 self.load_selected_cemetery()
             }
             Err(error) => {
-                self.status = Some(format!("Could not create cemetery: {error}"));
+                self.status = Some(AppStatus::CouldNotCreateCemetery(error.to_string()));
                 Task::none()
             }
         }
@@ -474,8 +573,7 @@ impl Requiescat {
         if matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_))
             && !self.save_active_cemetery()
         {
-            self.status =
-                Some("Export cancelled because the cemetery could not be saved.".to_owned());
+            self.status = Some(AppStatus::ExportSaveFailed);
             return;
         }
 
@@ -484,8 +582,8 @@ impl Requiescat {
         };
 
         self.status = match library.export(source, &destination) {
-            Ok(()) => Some("Cemetery exported.".to_owned()),
-            Err(error) => Some(format!("Could not export cemetery: {error}")),
+            Ok(()) => Some(AppStatus::CemeteryExported),
+            Err(error) => Some(AppStatus::CouldNotExportCemetery(error.to_string())),
         };
     }
 
@@ -496,7 +594,9 @@ impl Requiescat {
 
         match library.cemeteries() {
             Ok(cemeteries) => self.cemeteries = cemeteries,
-            Err(error) => self.status = Some(format!("Could not refresh cemeteries: {error}")),
+            Err(error) => {
+                self.status = Some(AppStatus::CouldNotRefreshCemeteries(error.to_string()))
+            }
         }
     }
 
@@ -512,7 +612,7 @@ impl Requiescat {
                 true
             }
             Err(error) => {
-                self.save_state = SaveState::Failed(format!("Save failed: {error}"));
+                self.save_state = SaveState::Failed(error.to_string());
                 false
             }
         }
