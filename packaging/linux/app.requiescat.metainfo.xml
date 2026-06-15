@@ -8,5 +8,5 @@
   <description>
     <p>Manage cemetery maps and person records in a local library.</p>
   </description>
-  <launchable type="desktop-id">app.requiescat.desktop</launchable>
+  <launchable type="desktop-id">app.requiescat.org.desktop</launchable>
 </component>

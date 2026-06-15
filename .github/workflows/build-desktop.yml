@@ -64,9 +64,10 @@ jobs:
       - name: Build MSI
         shell: pwsh
         run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
           wix build packaging/windows/Product.wxs `
             -arch x64 `
-            -d Version="${env:GITHUB_REF_NAME.TrimStart('v')}" `
+            -d Version="$version" `
             -d BinDir="target/release" `
             -d SourceDir="." `
             -o requiescat-windows-x86_64.msi

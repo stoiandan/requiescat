@@ -3,6 +3,6 @@ Type=Application
 Name=Requiescat
 Comment=Cemetery records and maps
 Exec=requiescat
-Icon=app.requiescat
+Icon=app.requiescat.org
 Terminal=false
 Categories=Office;Database;

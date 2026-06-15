@@ -8,7 +8,6 @@ command: requiescat
 finish-args:
   - --share=ipc
   - --share=network
-  - --socket=fallback-x11
   - --socket=wayland
   - --device=dri
 modules:
@@ -21,16 +20,16 @@ modules:
     build-commands:
       - cargo build --locked --release --bin requiescat
       - install -Dm755 target/release/requiescat /app/bin/requiescat
-      - install -Dm644 packaging/linux/app.requiescat.desktop /app/share/applications/app.requiescat.desktop
-      - install -Dm644 packaging/linux/app.requiescat.metainfo.xml /app/share/metainfo/app.requiescat.metainfo.xml
-      - install -Dm644 packaging/icons/requiescat.svg /app/share/icons/hicolor/scalable/apps/app.requiescat.svg
-      - install -Dm644 packaging/icons/hicolor/16x16/apps/app.requiescat.png /app/share/icons/hicolor/16x16/apps/app.requiescat.png
-      - install -Dm644 packaging/icons/hicolor/32x32/apps/app.requiescat.png /app/share/icons/hicolor/32x32/apps/app.requiescat.png
-      - install -Dm644 packaging/icons/hicolor/48x48/apps/app.requiescat.png /app/share/icons/hicolor/48x48/apps/app.requiescat.png
-      - install -Dm644 packaging/icons/hicolor/64x64/apps/app.requiescat.png /app/share/icons/hicolor/64x64/apps/app.requiescat.png
-      - install -Dm644 packaging/icons/hicolor/128x128/apps/app.requiescat.png /app/share/icons/hicolor/128x128/apps/app.requiescat.png
-      - install -Dm644 packaging/icons/hicolor/256x256/apps/app.requiescat.png /app/share/icons/hicolor/256x256/apps/app.requiescat.png
-      - install -Dm644 packaging/icons/hicolor/512x512/apps/app.requiescat.png /app/share/icons/hicolor/512x512/apps/app.requiescat.png
+      - install -Dm644 packaging/linux/app.requiescat.desktop /app/share/applications/app.requiescat.org.desktop
+      - install -Dm644 packaging/linux/app.requiescat.metainfo.xml /app/share/metainfo/app.requiescat.org.metainfo.xml
+      - install -Dm644 packaging/icons/requiescat.svg /app/share/icons/hicolor/scalable/apps/app.requiescat.org.svg
+      - install -Dm644 packaging/icons/hicolor/16x16/apps/app.requiescat.png /app/share/icons/hicolor/16x16/apps/app.requiescat.org.png
+      - install -Dm644 packaging/icons/hicolor/32x32/apps/app.requiescat.png /app/share/icons/hicolor/32x32/apps/app.requiescat.org.png
+      - install -Dm644 packaging/icons/hicolor/48x48/apps/app.requiescat.png /app/share/icons/hicolor/48x48/apps/app.requiescat.org.png
+      - install -Dm644 packaging/icons/hicolor/64x64/apps/app.requiescat.png /app/share/icons/hicolor/64x64/apps/app.requiescat.org.png
+      - install -Dm644 packaging/icons/hicolor/128x128/apps/app.requiescat.png /app/share/icons/hicolor/128x128/apps/app.requiescat.org.png
+      - install -Dm644 packaging/icons/hicolor/256x256/apps/app.requiescat.png /app/share/icons/hicolor/256x256/apps/app.requiescat.org.png
+      - install -Dm644 packaging/icons/hicolor/512x512/apps/app.requiescat.png /app/share/icons/hicolor/512x512/apps/app.requiescat.org.png
     sources:
       - type: dir
         path: ../..
