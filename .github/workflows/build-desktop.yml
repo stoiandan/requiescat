@@ -67,7 +67,7 @@ jobs:
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           wix build packaging/windows/Product.wxs `
             -arch x64 `
-            -d Version="$version" `
+            -d Version="$($version).0" `
             -d BinDir="target/release" `
             -d SourceDir="." `
             -o requiescat-windows-x86_64.msi
