@@ -13,21 +13,14 @@ use requiescat::persistence::{
 };
 use requiescat::screens::{
     MapEditor, MapEditorMessage, MapEditorUpdateOutcome, StartMenuMessage, StartMenuViewState,
-    UpdateStatusView, start_menu_view,
+    start_menu_view,
 };
-use requiescat::updater::{self, AvailableUpdate, StagedUpdate};
 
 fn main() -> iced::Result {
-    if let Some(result) = updater::run_installer_mode() {
-        if let Err(error) = result {
-            updater::record_installer_failure(&error);
-            eprintln!("Update installation failed: {error}");
-            std::process::exit(1);
-        }
+    if std::env::args_os().any(|argument| argument == "--version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-
-    updater::remove_stale_helper();
 
     iced::daemon(Requiescat::boot, Requiescat::update, Requiescat::view)
         .title(Requiescat::title)
@@ -52,8 +45,6 @@ enum Message {
     ImportPathChosen(Option<PathBuf>),
     ExportPathChosen(Option<PathBuf>),
     Editor(MapEditorMessage),
-    UpdateCheckFinished(Result<Option<AvailableUpdate>, String>),
-    UpdateDownloaded(Result<StagedUpdate, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,48 +65,6 @@ enum SaveState {
     Clean,
     Dirty,
     Failed(String),
-}
-
-#[derive(Debug, Clone, Default)]
-enum UpdateState {
-    #[default]
-    Checking,
-    UpToDate,
-    Available(AvailableUpdate),
-    Downloading(AvailableUpdate),
-    Ready(StagedUpdate),
-    Failed(String),
-}
-
-impl UpdateState {
-    fn view(&self, language: Language) -> UpdateStatusView<'_> {
-        let language_code = language.code();
-        match self {
-            Self::Checking => UpdateStatusView::Checking,
-            Self::UpToDate => UpdateStatusView::UpToDate,
-            Self::Available(update) => UpdateStatusView::Available {
-                version: &update.version,
-                description: update.description(language_code),
-            },
-            Self::Downloading(update) => UpdateStatusView::Downloading {
-                version: &update.version,
-                description: update.description(language_code),
-            },
-            Self::Ready(update) => UpdateStatusView::Ready {
-                version: &update.version,
-                description: update.description(language_code),
-            },
-            Self::Failed(error) => UpdateStatusView::Failed(error),
-        }
-    }
-
-    fn release_notes_url(&self) -> Option<&str> {
-        match self {
-            Self::Available(update) | Self::Downloading(update) => Some(update.notes_url()),
-            Self::Ready(update) => Some(update.notes_url()),
-            Self::Checking | Self::UpToDate | Self::Failed(_) => None,
-        }
-    }
 }
 
 impl SaveState {
@@ -190,7 +139,6 @@ struct Requiescat {
     new_cemetery_name: String,
     status: Option<AppStatus>,
     save_state: SaveState,
-    update_state: UpdateState,
     app_menu: Option<AppMenu>,
 }
 
@@ -239,13 +187,9 @@ impl Requiescat {
                 new_cemetery_name: String::new(),
                 status,
                 save_state: SaveState::Clean,
-                update_state: UpdateState::Checking,
                 app_menu: None,
             },
-            Task::batch([
-                open.map(Message::MainWindowOpened),
-                check_for_updates_task(),
-            ]),
+            open.map(Message::MainWindowOpened),
         )
     }
 
@@ -373,19 +317,6 @@ impl Requiescat {
                     }
                 }
             },
-            Message::UpdateCheckFinished(result) => {
-                self.update_state = match result {
-                    Ok(Some(update)) => UpdateState::Available(update),
-                    Ok(None) => UpdateState::UpToDate,
-                    Err(error) => UpdateState::Failed(error),
-                };
-            }
-            Message::UpdateDownloaded(result) => {
-                self.update_state = match result {
-                    Ok(update) => UpdateState::Ready(update),
-                    Err(error) => UpdateState::Failed(error),
-                };
-            }
         }
 
         Task::none()
@@ -424,7 +355,6 @@ impl Requiescat {
                         show_create_cemetery: self.show_create_cemetery,
                         new_cemetery_name: &self.new_cemetery_name,
                         status,
-                        update_status: self.update_state.view(self.localizer.language()),
                     },
                 )
                 .map(Message::StartMenu),
@@ -687,36 +617,6 @@ impl Requiescat {
             StartMenuMessage::ExportSelected => {
                 return self.choose_export_path();
             }
-            StartMenuMessage::CheckForUpdates => {
-                self.update_state = UpdateState::Checking;
-                return check_for_updates_task();
-            }
-            StartMenuMessage::DownloadUpdate => {
-                let UpdateState::Available(update) = &self.update_state else {
-                    return Task::none();
-                };
-                let update = update.clone();
-                self.update_state = UpdateState::Downloading(update.clone());
-                return Task::perform(updater::download_update(update), |result| {
-                    Message::UpdateDownloaded(result.map_err(|error| error.to_string()))
-                });
-            }
-            StartMenuMessage::InstallUpdate => {
-                let UpdateState::Ready(update) = &self.update_state else {
-                    return Task::none();
-                };
-                match updater::install_and_restart(update) {
-                    Ok(()) => return iced::exit(),
-                    Err(error) => self.update_state = UpdateState::Failed(error.to_string()),
-                }
-            }
-            StartMenuMessage::OpenReleaseNotes => {
-                if let Some(notes_url) = self.update_state.release_notes_url()
-                    && let Err(error) = updater::open_release_notes(notes_url)
-                {
-                    self.update_state = UpdateState::Failed(error.to_string());
-                }
-            }
         }
 
         Task::none()
@@ -857,12 +757,6 @@ impl Requiescat {
             }
         }
     }
-}
-
-fn check_for_updates_task() -> Task<Message> {
-    Task::perform(updater::check_for_update(), |result| {
-        Message::UpdateCheckFinished(result.map_err(|error| error.to_string()))
-    })
 }
 
 fn is_command_shortcut(event: &keyboard::Event, character: char) -> bool {

@@ -25,29 +25,6 @@ pub enum Message {
     SubmitCreateCemetery,
     ImportCemetery,
     ExportSelected,
-    CheckForUpdates,
-    DownloadUpdate,
-    InstallUpdate,
-    OpenReleaseNotes,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum UpdateStatusView<'a> {
-    Checking,
-    UpToDate,
-    Available {
-        version: &'a str,
-        description: &'a str,
-    },
-    Downloading {
-        version: &'a str,
-        description: &'a str,
-    },
-    Ready {
-        version: &'a str,
-        description: &'a str,
-    },
-    Failed(&'a str),
 }
 
 pub struct ViewState<'a> {
@@ -57,7 +34,6 @@ pub struct ViewState<'a> {
     pub show_create_cemetery: bool,
     pub new_cemetery_name: &'a str,
     pub status: Option<String>,
-    pub update_status: UpdateStatusView<'a>,
 }
 
 pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, Message> {
@@ -181,8 +157,7 @@ pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, M
             ]
             .spacing(6),
             action_buttons,
-            status_view(state.status),
-            update_status_view(localizer, state.update_status)
+            status_view(state.status)
         ]
         .spacing(24),
     )
@@ -197,119 +172,6 @@ pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, M
         .style(|_| panel_style(16.0));
 
     screen(panel)
-}
-
-fn update_status_view<'a>(
-    localizer: &'a Localizer,
-    status: UpdateStatusView<'a>,
-) -> Element<'a, Message> {
-    let (message, description, primary_action, show_notes) = match status {
-        UpdateStatusView::Checking => (
-            localizer.text(MessageId::CheckingForUpdates),
-            None,
-            None,
-            false,
-        ),
-        UpdateStatusView::UpToDate => (
-            localizer.value(
-                MessageId::ApplicationUpToDate,
-                "version",
-                env!("CARGO_PKG_VERSION"),
-            ),
-            None,
-            Some((
-                localizer.text(MessageId::CheckAgain),
-                Message::CheckForUpdates,
-            )),
-            false,
-        ),
-        UpdateStatusView::Available {
-            version,
-            description,
-        } => (
-            localizer.value(MessageId::UpdateAvailable, "version", version),
-            Some(description),
-            Some((
-                localizer.text(MessageId::DownloadUpdate),
-                Message::DownloadUpdate,
-            )),
-            true,
-        ),
-        UpdateStatusView::Downloading {
-            version,
-            description,
-        } => (
-            localizer.value(MessageId::DownloadingUpdate, "version", version),
-            Some(description),
-            None,
-            true,
-        ),
-        UpdateStatusView::Ready {
-            version,
-            description,
-        } => (
-            localizer.value(MessageId::UpdateReady, "version", version),
-            Some(description),
-            Some((
-                localizer.text(MessageId::RestartAndInstall),
-                Message::InstallUpdate,
-            )),
-            true,
-        ),
-        UpdateStatusView::Failed(error) => (
-            localizer.value(MessageId::UpdateCheckFailed, "error", error),
-            None,
-            Some((
-                localizer.text(MessageId::TryAgain),
-                Message::CheckForUpdates,
-            )),
-            false,
-        ),
-    };
-
-    let mut actions = row![].spacing(8);
-    if let Some((label, action)) = primary_action {
-        actions = actions.push(
-            button(text(label).size(12))
-                .on_press(action)
-                .padding([7, 11])
-                .style(secondary_button_style),
-        );
-    }
-    if show_notes {
-        actions = actions.push(
-            button(text(localizer.text(MessageId::ReleaseNotes)).size(12))
-                .on_press(Message::OpenReleaseNotes)
-                .padding([7, 11])
-                .style(quiet_button_style),
-        );
-    }
-
-    let mut content = column![
-        text(localizer.text(MessageId::SoftwareUpdates))
-            .size(12)
-            .color(TEXT_PRIMARY),
-        text(message).size(11).color(TEXT_MUTED),
-    ]
-    .spacing(7);
-    if let Some(description) = description {
-        content = content.push(text(description).size(11).color(TEXT_MUTED));
-    }
-    content = content.push(actions);
-
-    container(content)
-        .width(Length::Fill)
-        .padding([9, 12])
-        .style(|_| container::Style {
-            background: Some(Background::Color(Color::from_rgb(0.04, 0.14, 0.145))),
-            border: Border {
-                color: BORDER_COLOR,
-                width: 1.0,
-                radius: 9.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
 }
 
 fn create_cemetery_form<'a>(

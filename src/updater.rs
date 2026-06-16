@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -20,41 +19,16 @@ const DEFAULT_MANIFEST_URL: &str =
     "https://github.com/stoiandan/requiescat/releases/latest/download/release-manifest.json";
 const INSTALL_MODE_ARGUMENT: &str = "--install-update";
 
-#[derive(Debug, Clone)]
-pub struct AvailableUpdate {
-    pub version: String,
-    notes_url: String,
-    descriptions: HashMap<String, String>,
+#[derive(Debug)]
+struct AvailableUpdate {
+    version: String,
     asset: ReleaseAsset,
 }
 
-impl AvailableUpdate {
-    pub fn description(&self, language_code: &str) -> &str {
-        localized_description(&self.descriptions, language_code)
-    }
-
-    pub fn notes_url(&self) -> &str {
-        &self.notes_url
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct StagedUpdate {
-    pub version: String,
-    notes_url: String,
-    descriptions: HashMap<String, String>,
+#[derive(Debug)]
+struct StagedUpdate {
     archive: PathBuf,
     format: ArchiveFormat,
-}
-
-impl StagedUpdate {
-    pub fn description(&self, language_code: &str) -> &str {
-        localized_description(&self.descriptions, language_code)
-    }
-
-    pub fn notes_url(&self) -> &str {
-        &self.notes_url
-    }
 }
 
 #[derive(Debug)]
@@ -65,6 +39,16 @@ pub enum UpdateError {
     InvalidManifest(String),
     UnsupportedPlatform,
     ChecksumMismatch,
+}
+
+#[derive(Debug, Clone)]
+pub enum LauncherProgress {
+    CheckingForUpdates,
+    UpToDate,
+    Downloading { version: String },
+    Installing,
+    CheckFailed { error: String },
+    LaunchingApplication,
 }
 
 impl fmt::Display for UpdateError {
@@ -98,9 +82,7 @@ impl From<io::Error> for UpdateError {
 #[derive(Debug, Deserialize)]
 struct ReleaseManifest {
     version: String,
-    notes_url: String,
-    descriptions: HashMap<String, String>,
-    assets: HashMap<String, ReleaseAsset>,
+    assets: std::collections::HashMap<String, ReleaseAsset>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -150,13 +132,10 @@ struct InstallRequest {
     parent_pid: u32,
 }
 
-pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> {
-    check_for_update_blocking()
-}
-
-pub fn check_for_update_blocking() -> Result<Option<AvailableUpdate>, UpdateError> {
+fn check_for_update_blocking() -> Result<Option<AvailableUpdate>, UpdateError> {
     let manifest_url =
         option_env!("REQUIESCAT_UPDATE_MANIFEST_URL").unwrap_or(DEFAULT_MANIFEST_URL);
+    let current_version = installed_application_version().unwrap_or_else(|_| package_version());
     let client = http_client()?;
     let manifest = client
         .get(manifest_url)
@@ -164,14 +143,10 @@ pub fn check_for_update_blocking() -> Result<Option<AvailableUpdate>, UpdateErro
         .error_for_status()?
         .json::<ReleaseManifest>()?;
 
-    update_from_manifest(manifest)
+    update_from_manifest(manifest, &current_version)
 }
 
-pub async fn download_update(update: AvailableUpdate) -> Result<StagedUpdate, UpdateError> {
-    download_update_blocking(update)
-}
-
-pub fn download_update_blocking(update: AvailableUpdate) -> Result<StagedUpdate, UpdateError> {
+fn download_update_blocking(update: AvailableUpdate) -> Result<StagedUpdate, UpdateError> {
     let client = http_client()?;
     let bytes = client
         .get(&update.asset.url)
@@ -188,13 +163,14 @@ fn http_client() -> Result<reqwest::blocking::Client, UpdateError> {
         .build()?)
 }
 
-fn update_from_manifest(manifest: ReleaseManifest) -> Result<Option<AvailableUpdate>, UpdateError> {
+fn update_from_manifest(
+    manifest: ReleaseManifest,
+    current_version: &Version,
+) -> Result<Option<AvailableUpdate>, UpdateError> {
     let available_version = parse_version(&manifest.version)?;
-    let current_version = parse_version(env!("CARGO_PKG_VERSION"))?;
-    if available_version <= current_version {
+    if available_version <= *current_version {
         return Ok(None);
     }
-    validate_descriptions(&manifest.descriptions)?;
 
     let asset = manifest
         .assets
@@ -204,8 +180,6 @@ fn update_from_manifest(manifest: ReleaseManifest) -> Result<Option<AvailableUpd
 
     Ok(Some(AvailableUpdate {
         version: available_version.to_string(),
-        notes_url: manifest.notes_url,
-        descriptions: manifest.descriptions,
         asset,
     }))
 }
@@ -224,93 +198,56 @@ fn stage_update(update: AvailableUpdate, bytes: &[u8]) -> Result<StagedUpdate, U
     fs::write(&archive, bytes)?;
 
     Ok(StagedUpdate {
-        version: update.version,
-        notes_url: update.notes_url,
-        descriptions: update.descriptions,
         archive,
         format: update.asset.format,
     })
 }
 
-fn validate_descriptions(descriptions: &HashMap<String, String>) -> Result<(), UpdateError> {
-    for language in ["en", "ro"] {
-        if descriptions
-            .get(language)
-            .is_none_or(|description| description.trim().is_empty())
-        {
-            return Err(UpdateError::InvalidManifest(format!(
-                "The release description for {language} is missing."
-            )));
-        }
+fn install_update_package(update: &StagedUpdate) -> Result<(), UpdateError> {
+    match update.format {
+        ArchiveFormat::Msi => install_msi_update(&update.archive),
+        ArchiveFormat::Flatpak => install_flatpak_update(&update.archive),
+        ArchiveFormat::Zip | ArchiveFormat::TarGz => install_archive_update(update),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn install_msi_update(installer: &Path) -> Result<(), UpdateError> {
+    let updater = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| {
+            UpdateError::InvalidManifest(
+                "The Windows installation directory is unavailable.".to_owned(),
+            )
+        })?
+        .join("requiescat-updater.exe");
+
+    Command::new(updater)
+        .arg("--install-msi")
+        .arg(installer)
+        .spawn()?;
     Ok(())
 }
 
-fn localized_description<'a>(
-    descriptions: &'a HashMap<String, String>,
-    language_code: &str,
-) -> &'a str {
-    descriptions
-        .get(language_code)
-        .or_else(|| descriptions.get("en"))
-        .map(String::as_str)
-        .unwrap_or_default()
+#[cfg(not(target_os = "windows"))]
+fn install_msi_update(_installer: &Path) -> Result<(), UpdateError> {
+    Err(UpdateError::UnsupportedPlatform)
 }
 
-pub fn open_release_notes(url: &str) -> Result<(), UpdateError> {
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("rundll32.exe");
-        command.arg("url.dll,FileProtocolHandler").arg(url);
-        command
-    };
-
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-    };
-
-    #[cfg(target_os = "linux")]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    return Err(UpdateError::UnsupportedPlatform);
-
-    command.spawn()?;
+#[cfg(target_os = "linux")]
+fn install_flatpak_update(bundle: &Path) -> Result<(), UpdateError> {
+    // Flatpak apps cannot replace files under /app from inside the sandbox.
+    // Hand the bundle to the desktop/Flatpak tooling instead.
+    Command::new("xdg-open").arg(bundle).spawn()?;
     Ok(())
 }
 
-pub fn install_and_restart(update: &StagedUpdate) -> Result<(), UpdateError> {
-    #[cfg(target_os = "windows")]
-    if matches!(update.format, ArchiveFormat::Msi) {
-        let executable = std::env::current_exe()?;
-        let updater = executable
-            .parent()
-            .ok_or_else(|| {
-                UpdateError::InvalidManifest(
-                    "The Windows installation directory is unavailable.".to_owned(),
-                )
-            })?
-            .join("requiescat-updater.exe");
-        Command::new(updater)
-            .arg("--install-msi")
-            .arg(&update.archive)
-            .spawn()?;
-        return Ok(());
-    }
+#[cfg(not(target_os = "linux"))]
+fn install_flatpak_update(_bundle: &Path) -> Result<(), UpdateError> {
+    Err(UpdateError::UnsupportedPlatform)
+}
 
-    #[cfg(target_os = "linux")]
-    if matches!(update.format, ArchiveFormat::Flatpak) {
-        Command::new("xdg-open").arg(&update.archive).spawn()?;
-        return Ok(());
-    }
-
+fn install_archive_update(update: &StagedUpdate) -> Result<(), UpdateError> {
     let executable = std::env::current_exe()?;
     let target = installation_target(&executable)?;
     ensure_installation_writable(&target)?;
@@ -319,6 +256,10 @@ pub fn install_and_restart(update: &StagedUpdate) -> Result<(), UpdateError> {
     if helper.exists() {
         fs::remove_file(&helper)?;
     }
+
+    // On macOS the running executable lives inside Requiescat.app, so it cannot
+    // replace the bundle directly. Copy the updater outside the bundle and let
+    // that helper wait for this process before swapping the app atomically.
     fs::copy(&executable, &helper)?;
 
     let mut command = Command::new(&helper);
@@ -343,26 +284,60 @@ pub fn install_and_restart(update: &StagedUpdate) -> Result<(), UpdateError> {
 }
 
 pub fn run_launcher_mode() -> Result<(), UpdateError> {
+    run_launcher_mode_with_progress(|_| {})
+}
+
+pub fn run_launcher_mode_with_progress(
+    mut report: impl FnMut(LauncherProgress),
+) -> Result<(), UpdateError> {
+    if complete_installation_if_requested(&mut report)? {
+        return Ok(());
+    }
+
+    remove_stale_helper();
+
     match LauncherAction::from_arguments(std::env::args_os().collect::<Vec<_>>())? {
-        LauncherAction::InstallLatest => match install_latest_update() {
+        LauncherAction::InstallLatest => match install_latest_update(&mut report) {
             Ok(true) => Ok(()),
-            Ok(false) | Err(_) => launch_installed_application(),
+            Ok(false) => launch_application(&mut report),
+            Err(error) => {
+                report(LauncherProgress::CheckFailed {
+                    error: error.to_string(),
+                });
+                launch_application(&mut report)
+            }
         },
-        LauncherAction::LaunchApp => launch_installed_application(),
-        LauncherAction::InstallMsi(installer) => launch_msi_installer(&installer),
+        LauncherAction::LaunchApp => launch_application(&mut report),
+        LauncherAction::InstallMsi(installer) => {
+            report(LauncherProgress::Installing);
+            launch_msi_installer(&installer)
+        }
     }
 }
 
-fn install_latest_update() -> Result<bool, UpdateError> {
+fn install_latest_update(report: &mut impl FnMut(LauncherProgress)) -> Result<bool, UpdateError> {
+    report(LauncherProgress::CheckingForUpdates);
+
     match check_for_update_blocking() {
         Ok(Some(update)) => {
+            let version = update.version.clone();
+            report(LauncherProgress::Downloading { version });
             let update = download_update_blocking(update)?;
-            install_and_restart(&update)?;
+            report(LauncherProgress::Installing);
+            install_update_package(&update)?;
             Ok(true)
         }
-        Ok(None) => Ok(false),
+        Ok(None) => {
+            report(LauncherProgress::UpToDate);
+            Ok(false)
+        }
         Err(error) => Err(error),
     }
+}
+
+fn launch_application(report: &mut impl FnMut(LauncherProgress)) -> Result<(), UpdateError> {
+    report(LauncherProgress::LaunchingApplication);
+    launch_installed_application()
 }
 
 enum LauncherAction {
@@ -392,14 +367,7 @@ impl LauncherAction {
 }
 
 pub fn launch_installed_application() -> Result<(), UpdateError> {
-    let executable = std::env::current_exe()?;
-    let application = executable
-        .parent()
-        .ok_or_else(|| {
-            UpdateError::InvalidManifest("The installation directory is unavailable.".to_owned())
-        })?
-        .join(application_executable_name());
-    Command::new(application).spawn()?;
+    Command::new(installed_application_path()?).spawn()?;
     Ok(())
 }
 
@@ -424,17 +392,44 @@ fn launch_msi_installer(_installer: &Path) -> Result<(), UpdateError> {
     Err(UpdateError::UnsupportedPlatform)
 }
 
-pub fn run_installer_mode() -> Option<Result<(), UpdateError>> {
-    let mut arguments = std::env::args_os();
-    let _executable = arguments.next();
-    if arguments.next().as_deref() != Some(INSTALL_MODE_ARGUMENT.as_ref()) {
-        return None;
+fn complete_installation_if_requested(
+    report: &mut impl FnMut(LauncherProgress),
+) -> Result<bool, UpdateError> {
+    let request = match install_request_from_arguments(std::env::args_os()) {
+        Ok(Some(request)) => request,
+        Ok(None) => return Ok(false),
+        Err(error) => {
+            record_installer_failure(&error);
+            return Err(error);
+        }
+    };
+
+    report(LauncherProgress::Installing);
+
+    if let Err(error) = install_update(request) {
+        record_installer_failure(&error);
+        return Err(error);
     }
 
-    Some(parse_install_request(arguments.collect()).and_then(install_update))
+    Ok(true)
 }
 
-pub fn remove_stale_helper() {
+fn install_request_from_arguments(
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> Result<Option<InstallRequest>, UpdateError> {
+    let mut arguments = arguments.into_iter();
+    let _executable = arguments.next();
+    let Some(mode) = arguments.next() else {
+        return Ok(None);
+    };
+    if mode != INSTALL_MODE_ARGUMENT {
+        return Ok(None);
+    }
+
+    parse_install_request(arguments.collect()).map(Some)
+}
+
+fn remove_stale_helper() {
     let Ok(helper) = helper_path() else {
         return;
     };
@@ -443,7 +438,7 @@ pub fn remove_stale_helper() {
     }
 }
 
-pub fn record_installer_failure(error: &UpdateError) {
+fn record_installer_failure(error: &UpdateError) {
     let Ok(directory) = application_data_directory() else {
         return;
     };
@@ -715,6 +710,42 @@ fn application_executable_name() -> &'static str {
     }
 }
 
+fn installed_application_path() -> Result<PathBuf, UpdateError> {
+    let executable = std::env::current_exe()?;
+    let directory = executable.parent().ok_or_else(|| {
+        UpdateError::InvalidManifest("The installation directory is unavailable.".to_owned())
+    })?;
+
+    Ok(directory.join(application_executable_name()))
+}
+
+fn installed_application_version() -> Result<Version, UpdateError> {
+    application_version_from(installed_application_path()?)
+}
+
+fn package_version() -> Version {
+    parse_version(env!("CARGO_PKG_VERSION")).expect("CARGO_PKG_VERSION must be valid semver")
+}
+
+fn application_version_from(application: impl AsRef<Path>) -> Result<Version, UpdateError> {
+    let output = Command::new(application.as_ref())
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()?;
+
+    if !output.status.success() {
+        return Err(UpdateError::InvalidManifest(format!(
+            "Could not read application version: {}",
+            output.status
+        )));
+    }
+
+    let version = String::from_utf8(output.stdout).map_err(|_| {
+        UpdateError::InvalidManifest("Application version is not UTF-8.".to_owned())
+    })?;
+    parse_version(&version)
+}
+
 fn application_data_directory() -> Result<PathBuf, UpdateError> {
     #[cfg(target_os = "macos")]
     {
@@ -855,6 +886,39 @@ mod tests {
     }
 
     #[test]
+    fn detects_installer_mode_from_process_arguments() {
+        let request = install_request_from_arguments(vec![
+            "requiescat".into(),
+            INSTALL_MODE_ARGUMENT.into(),
+            "update.zip".into(),
+            "Requiescat.app".into(),
+            "zip".into(),
+            "42".into(),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(request.archive, PathBuf::from("update.zip"));
+        assert_eq!(request.target, PathBuf::from("Requiescat.app"));
+        assert!(matches!(request.format, ArchiveFormat::Zip));
+        assert_eq!(request.parent_pid, 42);
+    }
+
+    #[test]
+    fn ignores_non_installer_process_arguments() {
+        assert!(
+            install_request_from_arguments(vec!["requiescat".into()])
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            install_request_from_arguments(vec!["requiescat".into(), "--launch-app".into()])
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn parses_launcher_arguments() {
         assert!(matches!(
             LauncherAction::from_arguments(vec!["requiescat-updater".into()]).unwrap(),
@@ -883,19 +947,44 @@ mod tests {
     }
 
     #[test]
+    fn manifest_update_is_compared_to_application_version() {
+        let manifest = release_manifest("2.0.0");
+        let current_version = Version::new(1, 5, 0);
+
+        let update = update_from_manifest(manifest, &current_version).unwrap();
+
+        assert_eq!(update.unwrap().version, "2.0.0");
+    }
+
+    #[test]
+    fn manifest_without_newer_version_is_ignored() {
+        let manifest = release_manifest("2.0.0");
+        let current_version = Version::new(2, 0, 0);
+
+        assert!(
+            update_from_manifest(manifest, &current_version)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn platform_has_a_release_key() {
         assert!(!platform_key().is_empty());
     }
 
-    #[test]
-    fn localized_description_uses_english_as_fallback() {
-        let descriptions = HashMap::from([
-            ("en".to_owned(), "English notes".to_owned()),
-            ("ro".to_owned(), "Note în română".to_owned()),
-        ]);
-
-        assert_eq!(localized_description(&descriptions, "ro"), "Note în română");
-        assert_eq!(localized_description(&descriptions, "de"), "English notes");
-        assert!(validate_descriptions(&descriptions).is_ok());
+    fn release_manifest(version: &str) -> ReleaseManifest {
+        ReleaseManifest {
+            version: version.to_owned(),
+            assets: std::collections::HashMap::from([(
+                platform_key().to_owned(),
+                ReleaseAsset {
+                    url: "https://example.com/update.zip".to_owned(),
+                    sha256: "checksum".to_owned(),
+                    file_name: "update.zip".to_owned(),
+                    format: ArchiveFormat::Zip,
+                },
+            )]),
+        }
     }
 }

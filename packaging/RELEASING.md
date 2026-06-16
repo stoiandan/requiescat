@@ -20,19 +20,19 @@ channel.
 
 Update `packaging/release-notes/en.md` and
 `packaging/release-notes/ro.md` before tagging a release. Their contents are
-embedded in the manifest as localized descriptions. Requiescat displays the
-description matching the currently selected language, with English as fallback.
+published with the release artifacts.
 
 Published packages install both `requiescat-updater` and `requiescat`. The
 platform launcher starts the updater first. It checks GitHub, verifies an
 available package, starts the platform installer when an update is available,
 or opens the GUI immediately when current.
 
-On Windows, the MSI performs major upgrades and relaunches the installed
-application. On macOS, the updater uses an internal helper process to replace
-the signed app bundle. On Linux, updates are installed as Flatpak bundles and
-are managed by Flatpak rather than by replacing the executable inside the
-sandbox.
+On Windows, the updater downloads the MSI and hands it to Windows Installer,
+which performs the upgrade and relaunches the installed application. On macOS,
+the updater copies itself to Application Support first; that helper waits for
+the bundle process to exit before replacing the signed app bundle. On Linux,
+the updater opens the Flatpak bundle with the desktop/Flatpak tooling instead
+of trying to replace files inside the sandbox.
 
 ## Signing secrets
 

@@ -74,16 +74,3 @@ cemetery-exported = Cemetery exported.
 could-not-export-cemetery = Could not export cemetery: { $error }
 could-not-refresh-cemeteries = Could not refresh cemeteries: { $error }
 save-failed = Save failed: { $error }
-
-software-updates = Software updates
-checking-for-updates = Checking for updates…
-application-up-to-date = Requiescat { $version } is up to date.
-check-again = Check again
-update-available = Requiescat { $version } is available.
-download-update = Download update
-downloading-update = Downloading Requiescat { $version }…
-update-ready = Requiescat { $version } is ready to install.
-restart-and-install = Restart and install
-release-notes = Release notes
-update-check-failed = Update check failed: { $error }
-try-again = Try again
