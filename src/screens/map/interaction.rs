@@ -238,10 +238,9 @@ mod tests {
     #[test]
     fn unavailable_cursor_still_clears_an_active_drag() {
         let editor = editor_with_tool(Tool::Grab);
-        let mut state = CanvasState {
-            drag: DragState::Panning {
-                previous_cursor: Point::new(20.0, 20.0),
-            },
+        let mut state = CanvasState::default();
+        state.drag = DragState::Panning {
+            previous_cursor: Point::new(20.0, 20.0),
         };
 
         handle_event(

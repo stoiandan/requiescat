@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use super::Camera;
@@ -9,7 +10,7 @@ use iced::widget::{
 };
 use iced::{Background, Border, Color, Element, Length, Point, Renderer, Shadow, Theme, Vector};
 
-use crate::localization::{Localizer, MessageId};
+use crate::localization::{Language, Localizer, MessageId};
 use crate::models::{Cemetery, GraveId, GraveRectangle, Person, PersonDate, PersonId};
 
 #[derive(Default)]
@@ -22,6 +23,7 @@ pub struct MapEditor {
     person_search: String,
     new_person: NewPersonDraft,
     person_edits: HashMap<PersonId, PersonEditDraft>,
+    render_revision: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -95,10 +97,15 @@ impl MapEditor {
             Message::CreateGrave(rectangle) => {
                 self.cemetery
                     .add_grave_with_color(rectangle, self.toolbar.selected_grave_color());
+                self.invalidate_map();
                 UpdateOutcome::Changed
             }
             Message::ToolBarAction(action) => {
+                let previous_show_grid = self.toolbar.show_grid();
                 self.toolbar.update(action);
+                if self.toolbar.show_grid() != previous_show_grid {
+                    self.invalidate_map();
+                }
                 UpdateOutcome::Unchanged
             }
             Message::EraseGrave(id) => {
@@ -106,29 +113,40 @@ impl MapEditor {
                 if self.selected_grave == Some(id) {
                     self.selected_grave = None;
                 }
+                self.invalidate_map();
                 UpdateOutcome::Changed
             }
             Message::MoveGrave { id, delta } => {
                 self.cemetery.move_grave(id, delta);
+                self.invalidate_map();
                 UpdateOutcome::DeferredChange
             }
             Message::PanCamera(delta) => {
                 self.camera.pan_by_canvas_delta(delta);
+                self.invalidate_map();
                 UpdateOutcome::Unchanged
             }
             Message::ZoomCamera { cursor, amount } => {
                 self.camera.zoom_at(cursor, amount);
+                self.invalidate_map();
                 UpdateOutcome::Unchanged
             }
             Message::SelectGrave(id) => {
-                self.selected_grave = id;
+                if self.selected_grave != id {
+                    self.selected_grave = id;
+                    self.invalidate_map();
+                }
                 UpdateOutcome::Unchanged
             }
             Message::SelectPerson(id) => {
                 self.selected_person = Some(id);
+                let previous_grave = self.selected_grave;
                 self.selected_grave = self.cemetery.grave_for_person(id).map(|grave| grave.id());
                 if let Some(grave_id) = self.selected_grave {
                     self.center_camera_on_grave(grave_id);
+                }
+                if self.selected_grave != previous_grave {
+                    self.invalidate_map();
                 }
                 UpdateOutcome::Unchanged
             }
@@ -139,6 +157,7 @@ impl MapEditor {
             Message::AssignPersonToSelectedGrave(person_id) => {
                 if let Some(grave_id) = self.selected_grave {
                     self.cemetery.assign_person_to_grave(person_id, grave_id);
+                    self.invalidate_map();
                     UpdateOutcome::Changed
                 } else {
                     UpdateOutcome::Unchanged
@@ -146,6 +165,7 @@ impl MapEditor {
             }
             Message::UnassignPersonFromGrave(person_id) => {
                 self.cemetery.unassign_person_from_grave(person_id);
+                self.invalidate_map();
                 UpdateOutcome::Changed
             }
             Message::UpdatePersonFirstName(id, value) => {
@@ -155,6 +175,7 @@ impl MapEditor {
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
                     person.set_first_name(value);
+                    self.invalidate_map();
                     UpdateOutcome::Changed
                 } else {
                     UpdateOutcome::Unchanged
@@ -167,6 +188,7 @@ impl MapEditor {
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
                     person.set_last_name(value);
+                    self.invalidate_map();
                     UpdateOutcome::Changed
                 } else {
                     UpdateOutcome::Unchanged
@@ -179,6 +201,7 @@ impl MapEditor {
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
                     person.set_date_of_birth(date);
+                    self.invalidate_map();
                     UpdateOutcome::Changed
                 } else {
                     UpdateOutcome::Unchanged
@@ -197,6 +220,7 @@ impl MapEditor {
                     && let Some(person) = self.cemetery.person_mut(id)
                 {
                     person.set_date_of_decease(date);
+                    self.invalidate_map();
                     UpdateOutcome::Changed
                 } else {
                     UpdateOutcome::Unchanged
@@ -596,6 +620,7 @@ impl MapEditor {
         self.selected_person = Some(id);
         self.selected_grave = self.new_person.grave_id;
         self.new_person = NewPersonDraft::default();
+        self.invalidate_map();
 
         true
     }
@@ -603,6 +628,7 @@ impl MapEditor {
     fn center_camera_on_grave(&mut self, grave_id: GraveId) {
         if let Some(grave) = self.cemetery.grave(grave_id) {
             self.camera.center_on(grave.rectangle().center());
+            self.invalidate_map();
         }
     }
 
@@ -612,6 +638,10 @@ impl MapEditor {
 
     pub(super) fn show_grid(&self) -> bool {
         self.toolbar.show_grid()
+    }
+
+    fn invalidate_map(&mut self) {
+        self.render_revision = self.render_revision.saturating_add(1);
     }
 }
 
@@ -869,9 +899,20 @@ mod tests {
     }
 }
 
-#[derive(Default)]
 pub struct CanvasState {
     pub(super) drag: DragState,
+    map_cache: canvas::Cache<Renderer>,
+    map_cache_key: Cell<Option<MapCacheKey>>,
+}
+
+impl Default for CanvasState {
+    fn default() -> Self {
+        Self {
+            drag: DragState::default(),
+            map_cache: canvas::Cache::new(),
+            map_cache_key: Cell::new(None),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -912,6 +953,31 @@ struct LocalizedMapCanvas<'a> {
     localizer: &'a Localizer,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MapCacheKey {
+    render_revision: u64,
+    zoom: u32,
+    offset_x: u32,
+    offset_y: u32,
+    selected_grave: Option<GraveId>,
+    show_grid: bool,
+    language: Language,
+}
+
+impl MapCacheKey {
+    fn new(editor: &MapEditor, language: Language) -> Self {
+        Self {
+            render_revision: editor.render_revision,
+            zoom: editor.camera.zoom.to_bits(),
+            offset_x: editor.camera.offset.x.to_bits(),
+            offset_y: editor.camera.offset.y.to_bits(),
+            selected_grave: editor.selected_grave,
+            show_grid: editor.show_grid(),
+            language,
+        }
+    }
+}
+
 impl canvas::Program<Message> for LocalizedMapCanvas<'_> {
     type State = CanvasState;
 
@@ -923,25 +989,36 @@ impl canvas::Program<Message> for LocalizedMapCanvas<'_> {
         bounds: iced::Rectangle,
         _: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-
-        if self.editor.show_grid() {
-            drawing::grid(&mut frame, &self.editor.camera, bounds);
+        let cache_key = MapCacheKey::new(self.editor, self.localizer.language());
+        if state.map_cache_key.get() != Some(cache_key) {
+            state.map_cache.clear();
+            state.map_cache_key.set(Some(cache_key));
         }
 
-        drawing::grave_preview(&mut frame, state, &self.editor.camera);
-        drawing::graves(
-            &mut frame,
-            &self.editor.cemetery,
-            &self.editor.camera,
-            self.editor.selected_grave,
-            |grave_id| {
-                self.localizer
-                    .value(MessageId::GraveCanvas, "grave", grave_id.to_string())
-            },
-        );
+        let map = state.map_cache.draw(renderer, bounds.size(), |frame| {
+            if self.editor.show_grid() {
+                drawing::grid(frame, &self.editor.camera, bounds);
+            }
 
-        vec![frame.into_geometry()]
+            drawing::graves(
+                frame,
+                &self.editor.cemetery,
+                &self.editor.camera,
+                self.editor.selected_grave,
+                |grave_id| {
+                    self.localizer
+                        .value(MessageId::GraveCanvas, "grave", grave_id.to_string())
+                },
+            );
+        });
+
+        if state.current_drag_position().is_some() {
+            let mut preview = canvas::Frame::new(renderer, bounds.size());
+            drawing::grave_preview(&mut preview, state, &self.editor.camera);
+            vec![map, preview.into_geometry()]
+        } else {
+            vec![map]
+        }
     }
 
     fn update(

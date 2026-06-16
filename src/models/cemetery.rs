@@ -5,7 +5,7 @@ use super::{
     PersonId,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Cemetery {
     map: CemeteryMap,
     people: PersonDirectory,

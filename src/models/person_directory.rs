@@ -1,6 +1,6 @@
 use super::{GraveId, Person, PersonDate, PersonId};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PersonDirectory {
     people: Vec<Person>,
     next_person_id: i64,

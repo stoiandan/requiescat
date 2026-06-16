@@ -8,8 +8,9 @@ use iced::{
     keyboard, window,
 };
 use requiescat::localization::{Language, Localizer, MessageId};
+use requiescat::models::Cemetery;
 use requiescat::persistence::{
-    CemeteryFile, CemeteryLibrary, CemeteryRepository, SqliteCemeteryRepository,
+    CemeteryFile, CemeteryLibrary, CemeteryRepository, PersistenceError, SqliteCemeteryRepository,
 };
 use requiescat::screens::{
     MapEditor, MapEditorMessage, MapEditorUpdateOutcome, StartMenuMessage, StartMenuViewState,
@@ -45,6 +46,10 @@ enum Message {
     ImportPathChosen(Option<PathBuf>),
     ExportPathChosen(Option<PathBuf>),
     Editor(MapEditorMessage),
+    SaveFinished {
+        revision: u64,
+        result: Result<(), String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +144,9 @@ struct Requiescat {
     new_cemetery_name: String,
     status: Option<AppStatus>,
     save_state: SaveState,
+    save_revision: u64,
+    saved_revision: u64,
+    save_in_flight: bool,
     app_menu: Option<AppMenu>,
 }
 
@@ -187,6 +195,9 @@ impl Requiescat {
                 new_cemetery_name: String::new(),
                 status,
                 save_state: SaveState::Clean,
+                save_revision: 0,
+                saved_revision: 0,
+                save_in_flight: false,
                 app_menu: None,
             },
             open.map(Message::MainWindowOpened),
@@ -290,31 +301,46 @@ impl Requiescat {
                     self.export_selected_cemetery(destination);
                 }
             }
+            Message::SaveFinished { revision, result } => {
+                self.save_in_flight = false;
+                match result {
+                    Ok(()) => {
+                        self.saved_revision = self.saved_revision.max(revision);
+                        if self.save_revision == revision {
+                            self.save_state = SaveState::Clean;
+                        }
+                    }
+                    Err(error) => {
+                        self.save_state = SaveState::Failed(error);
+                    }
+                }
+
+                if self.save_revision > revision {
+                    return self.save_active_cemetery_in_background();
+                }
+            }
             Message::Editor(MapEditorMessage::OpenPersonDetails(person_id)) => {
                 return self.open_person_details(person_id);
             }
             Message::Editor(MapEditorMessage::SubmitNewPerson) => {
                 if self.editor.submit_new_person() {
-                    self.save_state = SaveState::Dirty;
-                    self.save_active_cemetery();
+                    let save = self.mark_dirty_and_autosave();
                     if let Some(id) = self.new_person_window.take() {
-                        return window::close(id);
+                        return Task::batch([save, window::close(id)]);
                     }
+                    return save;
                 }
             }
             Message::Editor(message) => match self.editor.update(message) {
                 MapEditorUpdateOutcome::Unchanged => {}
                 MapEditorUpdateOutcome::Changed => {
-                    self.save_state = SaveState::Dirty;
-                    self.save_active_cemetery();
+                    return self.mark_dirty_and_autosave();
                 }
                 MapEditorUpdateOutcome::DeferredChange => {
-                    self.save_state = SaveState::Dirty;
+                    self.mark_dirty();
                 }
                 MapEditorUpdateOutcome::Commit => {
-                    if matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_)) {
-                        self.save_active_cemetery();
-                    }
+                    return self.save_active_cemetery_in_background();
                 }
             },
         }
@@ -634,6 +660,9 @@ impl Requiescat {
                 self.main_screen = MainScreen::MapEditor;
                 self.status = None;
                 self.save_state = SaveState::Clean;
+                self.save_revision = 0;
+                self.saved_revision = 0;
+                self.save_in_flight = false;
 
                 self.main_window
                     .map(|id| window::resize(id, Size::new(1100.0, 760.0)))
@@ -749,6 +778,7 @@ impl Requiescat {
         match repository.save(self.editor.cemetery()) {
             Ok(()) => {
                 self.save_state = SaveState::Clean;
+                self.saved_revision = self.save_revision;
                 true
             }
             Err(error) => {
@@ -757,6 +787,41 @@ impl Requiescat {
             }
         }
     }
+
+    fn mark_dirty(&mut self) {
+        self.save_revision = self.save_revision.saturating_add(1);
+        self.save_state = SaveState::Dirty;
+    }
+
+    fn mark_dirty_and_autosave(&mut self) -> Task<Message> {
+        self.mark_dirty();
+        self.save_active_cemetery_in_background()
+    }
+
+    fn save_active_cemetery_in_background(&mut self) -> Task<Message> {
+        if self.save_in_flight || self.save_revision == self.saved_revision {
+            return Task::none();
+        }
+
+        let Some(path) = self.active_database.clone() else {
+            return Task::none();
+        };
+
+        let revision = self.save_revision;
+        let cemetery = self.editor.cemetery().clone();
+        self.save_in_flight = true;
+
+        Task::perform(save_cemetery_snapshot(path, cemetery), move |result| {
+            Message::SaveFinished { revision, result }
+        })
+    }
+}
+
+async fn save_cemetery_snapshot(path: PathBuf, cemetery: Cemetery) -> Result<(), String> {
+    let mut repository = SqliteCemeteryRepository::new(path);
+    repository
+        .save(&cemetery)
+        .map_err(|error: PersistenceError| error.to_string())
 }
 
 fn is_command_shortcut(event: &keyboard::Event, character: char) -> bool {

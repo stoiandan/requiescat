@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{Space, button, column, container, row, text};
 use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
 
 use crate::models::GraveColor;
@@ -216,12 +216,12 @@ fn color_palette(selected: GraveColor) -> Element<'static, ToolbarAction> {
 }
 
 fn color_picker_button(color: GraveColor) -> button::Button<'static, ToolbarAction> {
-    button(text("●").size(25))
+    button(Space::new().width(Length::Fill).height(Length::Fill))
         .width(44)
         .height(44)
         .padding(0)
         .on_press(ToolbarAction::ToggleColorPicker)
-        .style(move |_, status| color_button_style(status, color, true))
+        .style(move |_, status| color_button_style(status, color, false))
 }
 
 fn color_swatch(color: GraveColor, selected: bool) -> button::Button<'static, ToolbarAction> {

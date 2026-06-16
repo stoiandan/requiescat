@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use iced::widget::canvas;
 use iced::{Point, Rectangle};
 
@@ -103,21 +105,27 @@ pub fn graves(
     selected_grave: Option<GraveId>,
     grave_label: impl Fn(GraveId) -> String,
 ) {
+    let labels_by_grave = grave_labels_by_grave(cemetery);
+
     for grave in cemetery.graves() {
         let rectangle = grave.rectangle();
         let top_left = camera.world_to_screen(rectangle.top_left());
         let size = rectangle.size() * camera.zoom;
+        let grave_id = grave.id();
 
         frame.fill_rectangle(top_left, size, grave.color().to_iced());
         grave_labels(
             frame,
-            grave_label_rows(cemetery, grave.id()),
-            grave_label(grave.id()),
+            labels_by_grave
+                .get(&grave_id)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+            &grave_label(grave_id),
             top_left,
             size,
         );
 
-        if Some(grave.id()) == selected_grave {
+        if Some(grave_id) == selected_grave {
             let path = canvas::Path::rectangle(top_left, size);
 
             frame.stroke(
@@ -132,8 +140,8 @@ pub fn graves(
 
 fn grave_labels(
     frame: &mut canvas::Frame,
-    rows: Vec<String>,
-    fallback: String,
+    rows: &[String],
+    fallback: &str,
     top_left: Point,
     size: iced::Size,
 ) {
@@ -186,33 +194,41 @@ fn label_character_capacity(available_width: f32, font_size: f32) -> usize {
         .max(0.0) as usize
 }
 
-fn grave_label_rows(cemetery: &Cemetery, grave_id: GraveId) -> Vec<String> {
-    cemetery
-        .people_in_grave(grave_id)
-        .into_iter()
-        .map(|person| person.display_name())
-        .collect()
+fn grave_labels_by_grave(cemetery: &Cemetery) -> HashMap<GraveId, Vec<String>> {
+    let mut labels = HashMap::new();
+
+    for person in cemetery.people() {
+        if let Some(grave_id) = person.grave_id() {
+            labels
+                .entry(grave_id)
+                .or_insert_with(Vec::new)
+                .push(person.display_name());
+        }
+    }
+
+    labels
 }
 
-fn visible_label_rows(rows: Vec<String>, fallback: String, max_rows: usize) -> Vec<String> {
+fn visible_label_rows(rows: &[String], fallback: &str, max_rows: usize) -> Vec<String> {
     if max_rows == 0 {
         return Vec::new();
     }
 
     if rows.is_empty() {
-        return vec![fallback];
+        return vec![fallback.to_owned()];
     }
 
     if rows.len() <= max_rows {
-        return rows;
+        return rows.to_vec();
     }
 
     if max_rows == 1 {
         return vec!["...".to_owned()];
     }
 
-    rows.into_iter()
+    rows.iter()
         .take(max_rows - 1)
+        .cloned()
         .chain(std::iter::once("...".to_owned()))
         .collect()
 }
@@ -242,7 +258,7 @@ mod tests {
     #[test]
     fn visible_label_rows_uses_fallback_when_grave_has_no_people() {
         assert_eq!(
-            visible_label_rows(Vec::new(), "grave 1".to_owned(), 2),
+            visible_label_rows(&Vec::new(), "grave 1", 2),
             rows(&["grave 1"])
         );
     }
@@ -250,7 +266,7 @@ mod tests {
     #[test]
     fn visible_label_rows_keeps_all_people_that_fit() {
         assert_eq!(
-            visible_label_rows(rows(&["Dan Stoian", "Maria Boto"]), "grave 1".to_owned(), 2),
+            visible_label_rows(&rows(&["Dan Stoian", "Maria Boto"]), "grave 1", 2),
             rows(&["Dan Stoian", "Maria Boto"])
         );
     }
@@ -259,8 +275,8 @@ mod tests {
     fn visible_label_rows_reserves_last_row_for_overflow_marker() {
         assert_eq!(
             visible_label_rows(
-                rows(&["Dan Stoian", "Maria Boto", "Ada Lovelace"]),
-                "grave 1".to_owned(),
+                &rows(&["Dan Stoian", "Maria Boto", "Ada Lovelace"]),
+                "grave 1",
                 2
             ),
             rows(&["Dan Stoian", "..."])

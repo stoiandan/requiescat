@@ -2,7 +2,7 @@ use iced::Vector;
 
 use super::{Grave, GraveColor, GraveId, GraveRectangle};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct CemeteryMap {
     graves: Vec<Grave>,
     next_grave_id: i64,
