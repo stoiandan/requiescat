@@ -8,7 +8,7 @@
   <key>CFBundleDisplayName</key>
   <string>Requiescat</string>
   <key>CFBundleExecutable</key>
-  <string>requiescat</string>
+  <string>requiescat-updater</string>
   <key>CFBundleIconFile</key>
   <string>requiescat</string>
   <key>CFBundleIdentifier</key>

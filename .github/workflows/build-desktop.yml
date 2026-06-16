@@ -131,7 +131,7 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
-      - name: Build Apple Silicon executable
+      - name: Build Apple Silicon executables
         run: cargo build --locked --release --target aarch64-apple-darwin
 
       - name: Create Apple Silicon app bundle
@@ -142,6 +142,8 @@ jobs:
 
           cp target/aarch64-apple-darwin/release/requiescat \
             "$APP/Contents/MacOS/requiescat"
+          cp target/aarch64-apple-darwin/release/requiescat-updater \
+            "$APP/Contents/MacOS/requiescat-updater"
 
           cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c \
@@ -153,10 +155,12 @@ jobs:
           cp packaging/icons/requiescat.icns \
             "$APP/Contents/Resources/requiescat.icns"
           cp LICENSE "$APP/Contents/Resources/LICENSE"
-          chmod +x "$APP/Contents/MacOS/requiescat"
+          chmod +x "$APP/Contents/MacOS/requiescat" \
+            "$APP/Contents/MacOS/requiescat-updater"
 
           plutil -lint "$APP/Contents/Info.plist"
           file "$APP/Contents/MacOS/requiescat"
+          file "$APP/Contents/MacOS/requiescat-updater"
 
       - name: Sign macOS app
         if: env.MACOS_CERTIFICATE != ''

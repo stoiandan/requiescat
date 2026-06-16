@@ -4,7 +4,7 @@ runtime-version: "24.08"
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-command: requiescat
+command: requiescat-updater
 finish-args:
   - --share=ipc
   - --share=network
@@ -18,8 +18,9 @@ modules:
       build-args:
         - --share=network
     build-commands:
-      - cargo build --locked --release --bin requiescat
+      - cargo build --locked --release --bin requiescat --bin requiescat-updater
       - install -Dm755 target/release/requiescat /app/bin/requiescat
+      - install -Dm755 target/release/requiescat-updater /app/bin/requiescat-updater
       - install -Dm644 packaging/linux/app.requiescat.desktop /app/share/applications/app.requiescat.org.desktop
       - install -Dm644 packaging/linux/app.requiescat.metainfo.xml /app/share/metainfo/app.requiescat.org.metainfo.xml
       - install -Dm644 packaging/icons/requiescat.svg /app/share/icons/hicolor/scalable/apps/app.requiescat.org.svg

@@ -23,14 +23,16 @@ Update `packaging/release-notes/en.md` and
 embedded in the manifest as localized descriptions. Requiescat displays the
 description matching the currently selected language, with English as fallback.
 
-On Windows, the MSI installs `requiescat-updater.exe` and `requiescat.exe`. The
-Start Menu shortcut launches the updater, which checks GitHub, verifies and
-starts a newer MSI when available, or opens the GUI immediately when current.
-The MSI performs major upgrades and relaunches the installed application.
+Published packages install both `requiescat-updater` and `requiescat`. The
+platform launcher starts the updater first. It checks GitHub, verifies an
+available package, starts the platform installer when an update is available,
+or opens the GUI immediately when current.
 
-On macOS, the app uses the internal helper process to replace the signed app
-bundle. On Linux, updates are installed as Flatpak bundles and are managed by
-Flatpak rather than by replacing the executable inside the sandbox.
+On Windows, the MSI performs major upgrades and relaunches the installed
+application. On macOS, the updater uses an internal helper process to replace
+the signed app bundle. On Linux, updates are installed as Flatpak bundles and
+are managed by Flatpak rather than by replacing the executable inside the
+sandbox.
 
 ## Signing secrets
 

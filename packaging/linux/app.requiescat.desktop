@@ -2,7 +2,7 @@
 Type=Application
 Name=Requiescat
 Comment=Cemetery records and maps
-Exec=requiescat
+Exec=requiescat-updater
 Icon=app.requiescat.org
 Terminal=false
 Categories=Office;Database;

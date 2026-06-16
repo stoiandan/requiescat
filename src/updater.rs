@@ -23,7 +23,7 @@ const INSTALL_MODE_ARGUMENT: &str = "--install-update";
 #[derive(Debug, Clone)]
 pub struct AvailableUpdate {
     pub version: String,
-    pub notes_url: String,
+    notes_url: String,
     descriptions: HashMap<String, String>,
     asset: ReleaseAsset,
 }
@@ -32,12 +32,16 @@ impl AvailableUpdate {
     pub fn description(&self, language_code: &str) -> &str {
         localized_description(&self.descriptions, language_code)
     }
+
+    pub fn notes_url(&self) -> &str {
+        &self.notes_url
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct StagedUpdate {
     pub version: String,
-    pub notes_url: String,
+    notes_url: String,
     descriptions: HashMap<String, String>,
     archive: PathBuf,
     format: ArchiveFormat,
@@ -46,6 +50,10 @@ pub struct StagedUpdate {
 impl StagedUpdate {
     pub fn description(&self, language_code: &str) -> &str {
         localized_description(&self.descriptions, language_code)
+    }
+
+    pub fn notes_url(&self) -> &str {
+        &self.notes_url
     }
 }
 
@@ -143,19 +151,44 @@ struct InstallRequest {
 }
 
 pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> {
+    check_for_update_blocking()
+}
+
+pub fn check_for_update_blocking() -> Result<Option<AvailableUpdate>, UpdateError> {
     let manifest_url =
         option_env!("REQUIESCAT_UPDATE_MANIFEST_URL").unwrap_or(DEFAULT_MANIFEST_URL);
-    let client = reqwest::Client::builder()
-        .user_agent(concat!("requiescat/", env!("CARGO_PKG_VERSION")))
-        .build()?;
+    let client = http_client()?;
     let manifest = client
         .get(manifest_url)
-        .send()
-        .await?
+        .send()?
         .error_for_status()?
-        .json::<ReleaseManifest>()
-        .await?;
+        .json::<ReleaseManifest>()?;
 
+    update_from_manifest(manifest)
+}
+
+pub async fn download_update(update: AvailableUpdate) -> Result<StagedUpdate, UpdateError> {
+    download_update_blocking(update)
+}
+
+pub fn download_update_blocking(update: AvailableUpdate) -> Result<StagedUpdate, UpdateError> {
+    let client = http_client()?;
+    let bytes = client
+        .get(&update.asset.url)
+        .send()?
+        .error_for_status()?
+        .bytes()?;
+
+    stage_update(update, &bytes)
+}
+
+fn http_client() -> Result<reqwest::blocking::Client, UpdateError> {
+    Ok(reqwest::blocking::Client::builder()
+        .user_agent(concat!("requiescat-updater/", env!("CARGO_PKG_VERSION")))
+        .build()?)
+}
+
+fn update_from_manifest(manifest: ReleaseManifest) -> Result<Option<AvailableUpdate>, UpdateError> {
     let available_version = parse_version(&manifest.version)?;
     let current_version = parse_version(env!("CARGO_PKG_VERSION"))?;
     if available_version <= current_version {
@@ -177,24 +210,13 @@ pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> 
     }))
 }
 
-pub async fn download_update(update: AvailableUpdate) -> Result<StagedUpdate, UpdateError> {
-    let client = reqwest::Client::builder()
-        .user_agent(concat!("requiescat/", env!("CARGO_PKG_VERSION")))
-        .build()?;
-    let bytes = client
-        .get(&update.asset.url)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
-
-    let checksum = format!("{:x}", Sha256::digest(&bytes));
+fn stage_update(update: AvailableUpdate, bytes: &[u8]) -> Result<StagedUpdate, UpdateError> {
+    let checksum = format!("{:x}", Sha256::digest(bytes));
     if !checksum.eq_ignore_ascii_case(update.asset.sha256.trim()) {
         return Err(UpdateError::ChecksumMismatch);
     }
 
-    let directory = crate::persistence::application_data_directory()?
+    let directory = application_data_directory()?
         .join("updates")
         .join(&update.version);
     fs::create_dir_all(&directory)?;
@@ -320,6 +342,88 @@ pub fn install_and_restart(update: &StagedUpdate) -> Result<(), UpdateError> {
     Ok(())
 }
 
+pub fn run_launcher_mode() -> Result<(), UpdateError> {
+    match LauncherAction::from_arguments(std::env::args_os().collect::<Vec<_>>())? {
+        LauncherAction::InstallLatest => match install_latest_update() {
+            Ok(true) => Ok(()),
+            Ok(false) | Err(_) => launch_installed_application(),
+        },
+        LauncherAction::LaunchApp => launch_installed_application(),
+        LauncherAction::InstallMsi(installer) => launch_msi_installer(&installer),
+    }
+}
+
+fn install_latest_update() -> Result<bool, UpdateError> {
+    match check_for_update_blocking() {
+        Ok(Some(update)) => {
+            let update = download_update_blocking(update)?;
+            install_and_restart(&update)?;
+            Ok(true)
+        }
+        Ok(None) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+enum LauncherAction {
+    InstallLatest,
+    LaunchApp,
+    InstallMsi(PathBuf),
+}
+
+impl LauncherAction {
+    fn from_arguments(arguments: Vec<std::ffi::OsString>) -> Result<Self, UpdateError> {
+        if arguments.iter().any(|argument| argument == "--launch-app") {
+            return Ok(Self::LaunchApp);
+        }
+
+        if let Some(index) = arguments
+            .iter()
+            .position(|argument| argument == "--install-msi")
+        {
+            let installer = arguments.get(index + 1).ok_or_else(|| {
+                UpdateError::InvalidManifest("The MSI path is missing.".to_owned())
+            })?;
+            return Ok(Self::InstallMsi(installer.into()));
+        }
+
+        Ok(Self::InstallLatest)
+    }
+}
+
+pub fn launch_installed_application() -> Result<(), UpdateError> {
+    let executable = std::env::current_exe()?;
+    let application = executable
+        .parent()
+        .ok_or_else(|| {
+            UpdateError::InvalidManifest("The installation directory is unavailable.".to_owned())
+        })?
+        .join(application_executable_name());
+    Command::new(application).spawn()?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn launch_msi_installer(installer: &Path) -> Result<(), UpdateError> {
+    use std::os::windows::process::CommandExt;
+
+    Command::new("msiexec.exe")
+        .arg("/i")
+        .arg(installer)
+        .args(["/passive", "/norestart", "REQUIESCAT_LAUNCH=1"])
+        .creation_flags(0x0000_0008 | 0x0800_0000)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn launch_msi_installer(_installer: &Path) -> Result<(), UpdateError> {
+    Err(UpdateError::UnsupportedPlatform)
+}
+
 pub fn run_installer_mode() -> Option<Result<(), UpdateError>> {
     let mut arguments = std::env::args_os();
     let _executable = arguments.next();
@@ -340,7 +444,7 @@ pub fn remove_stale_helper() {
 }
 
 pub fn record_installer_failure(error: &UpdateError) {
-    let Ok(directory) = crate::persistence::application_data_directory() else {
+    let Ok(directory) = application_data_directory() else {
         return;
     };
     let directory = directory.join("updates");
@@ -594,13 +698,76 @@ fn installation_target(executable: &Path) -> Result<PathBuf, UpdateError> {
 }
 
 fn helper_path() -> Result<PathBuf, UpdateError> {
-    let directory = crate::persistence::application_data_directory()?.join("updates");
+    let directory = application_data_directory()?.join("updates");
     fs::create_dir_all(&directory)?;
     Ok(directory.join(if cfg!(target_os = "windows") {
         "requiescat-updater.exe"
     } else {
         "requiescat-updater"
     }))
+}
+
+fn application_executable_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "requiescat.exe"
+    } else {
+        "requiescat"
+    }
+}
+
+fn application_data_directory() -> Result<PathBuf, UpdateError> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            UpdateError::InvalidManifest("The HOME directory is unavailable".to_owned())
+        })?;
+        Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("Requiescat"))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let app_data = std::env::var_os("APPDATA").ok_or_else(|| {
+            UpdateError::InvalidManifest("The APPDATA directory is unavailable".to_owned())
+        })?;
+        Ok(PathBuf::from(app_data).join("Requiescat"))
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        linux_application_data_directory(
+            std::env::var_os("XDG_DATA_HOME"),
+            std::env::var_os("HOME"),
+        )
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Err(UpdateError::UnsupportedPlatform)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_application_data_directory(
+    data_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Result<PathBuf, UpdateError> {
+    if let Some(data_home) = data_home.filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(data_home).join("requiescat"));
+    }
+
+    let home = home.filter(|path| !path.is_empty()).ok_or_else(|| {
+        UpdateError::InvalidManifest(
+            "Neither XDG_DATA_HOME nor HOME is available on Linux.".to_owned(),
+        )
+    })?;
+
+    Ok(PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("requiescat"))
 }
 
 fn ensure_installation_writable(target: &Path) -> Result<(), UpdateError> {
@@ -661,12 +828,6 @@ fn macos_app_bundle(executable: &Path) -> Result<&Path, UpdateError> {
         })
 }
 
-impl From<crate::persistence::PersistenceError> for UpdateError {
-    fn from(error: crate::persistence::PersistenceError) -> Self {
-        Self::InvalidManifest(error.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,6 +852,34 @@ mod tests {
         assert_eq!(request.target, PathBuf::from("Requiescat.app"));
         assert!(matches!(request.format, ArchiveFormat::Zip));
         assert_eq!(request.parent_pid, 42);
+    }
+
+    #[test]
+    fn parses_launcher_arguments() {
+        assert!(matches!(
+            LauncherAction::from_arguments(vec!["requiescat-updater".into()]).unwrap(),
+            LauncherAction::InstallLatest
+        ));
+
+        assert!(matches!(
+            LauncherAction::from_arguments(vec![
+                "requiescat-updater".into(),
+                "--launch-app".into()
+            ])
+            .unwrap(),
+            LauncherAction::LaunchApp
+        ));
+
+        match LauncherAction::from_arguments(vec![
+            "requiescat-updater".into(),
+            "--install-msi".into(),
+            "update.msi".into(),
+        ])
+        .unwrap()
+        {
+            LauncherAction::InstallMsi(path) => assert_eq!(path, PathBuf::from("update.msi")),
+            _ => panic!("expected MSI launcher action"),
+        }
     }
 
     #[test]

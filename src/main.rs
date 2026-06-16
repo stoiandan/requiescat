@@ -1,11 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod localization;
-mod models;
-mod persistence;
-mod screens;
-mod updater;
-
 use std::path::PathBuf;
 
 use iced::widget::{Space, button, column, container, opaque, pick_list, pin, row, stack, text};
@@ -13,13 +7,15 @@ use iced::{
     Background, Border, Color, Element, Length, Shadow, Size, Subscription, Task, Theme, Vector,
     keyboard, window,
 };
-use localization::{Language, Localizer, MessageId};
-use persistence::{CemeteryFile, CemeteryLibrary, CemeteryRepository, SqliteCemeteryRepository};
-use screens::{
+use requiescat::localization::{Language, Localizer, MessageId};
+use requiescat::persistence::{
+    CemeteryFile, CemeteryLibrary, CemeteryRepository, SqliteCemeteryRepository,
+};
+use requiescat::screens::{
     MapEditor, MapEditorMessage, MapEditorUpdateOutcome, StartMenuMessage, StartMenuViewState,
     UpdateStatusView, start_menu_view,
 };
-use updater::{AvailableUpdate, StagedUpdate};
+use requiescat::updater::{self, AvailableUpdate, StagedUpdate};
 
 fn main() -> iced::Result {
     if let Some(result) = updater::run_installer_mode() {
@@ -43,7 +39,7 @@ fn main() -> iced::Result {
 enum Message {
     MainWindowOpened(window::Id),
     PersonDirectoryOpened(window::Id),
-    PersonDetailsOpened(window::Id, crate::models::PersonId),
+    PersonDetailsOpened(window::Id, requiescat::models::PersonId),
     NewPersonWindowOpened(window::Id),
     WindowClosed(window::Id),
     Keyboard(keyboard::Event),
@@ -112,6 +108,14 @@ impl UpdateState {
             Self::Failed(error) => UpdateStatusView::Failed(error),
         }
     }
+
+    fn release_notes_url(&self) -> Option<&str> {
+        match self {
+            Self::Available(update) | Self::Downloading(update) => Some(update.notes_url()),
+            Self::Ready(update) => Some(update.notes_url()),
+            Self::Checking | Self::UpToDate | Self::Failed(_) => None,
+        }
+    }
 }
 
 impl SaveState {
@@ -175,7 +179,7 @@ struct Requiescat {
     main_screen: MainScreen,
     main_window: Option<window::Id>,
     person_directory_window: Option<window::Id>,
-    person_detail_windows: Vec<(window::Id, crate::models::PersonId)>,
+    person_detail_windows: Vec<(window::Id, requiescat::models::PersonId)>,
     new_person_window: Option<window::Id>,
     library: Option<CemeteryLibrary>,
     cemeteries: Vec<CemeteryFile>,
@@ -505,23 +509,21 @@ impl Requiescat {
             container(content).width(Length::Fill).height(Length::Fill),
         ];
 
-        if show_app_menu {
-            if let Some(menu) = self.app_menu {
-                let dropdown_x = match menu {
-                    AppMenu::File => 10.0,
-                    AppMenu::View => 56.0,
-                };
+        if show_app_menu && let Some(menu) = self.app_menu {
+            let dropdown_x = match menu {
+                AppMenu::File => 10.0,
+                AppMenu::View => 56.0,
+            };
 
-                return stack![base]
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .push(
-                        pin(opaque(self.app_menu_dropdown(menu)))
-                            .x(dropdown_x)
-                            .y(31.0),
-                    )
-                    .into();
-            }
+            return stack![base]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .push(
+                    pin(opaque(self.app_menu_dropdown(menu)))
+                        .x(dropdown_x)
+                        .y(31.0),
+                )
+                .into();
         }
 
         base.into()
@@ -599,7 +601,7 @@ impl Requiescat {
         open.map(Message::PersonDirectoryOpened)
     }
 
-    fn open_person_details(&mut self, person_id: crate::models::PersonId) -> Task<Message> {
+    fn open_person_details(&mut self, person_id: requiescat::models::PersonId) -> Task<Message> {
         if let Some((id, _)) = self
             .person_detail_windows
             .iter()
@@ -709,14 +711,7 @@ impl Requiescat {
                 }
             }
             StartMenuMessage::OpenReleaseNotes => {
-                let notes_url = match &self.update_state {
-                    UpdateState::Available(update) | UpdateState::Downloading(update) => {
-                        Some(update.notes_url.as_str())
-                    }
-                    UpdateState::Ready(update) => Some(update.notes_url.as_str()),
-                    _ => None,
-                };
-                if let Some(notes_url) = notes_url
+                if let Some(notes_url) = self.update_state.release_notes_url()
                     && let Err(error) = updater::open_release_notes(notes_url)
                 {
                     self.update_state = UpdateState::Failed(error.to_string());
