@@ -28,6 +28,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Read package version
+        shell: bash
+        run: |
+          APP_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
+
       - name: Build release executable
         run: cargo build --locked --release --bin requiescat --bin requiescat-updater
 
@@ -64,10 +70,9 @@ jobs:
       - name: Build MSI
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
           wix build packaging/windows/Product.wxs `
             -arch x64 `
-            -d Version="$($version).0" `
+            -d Version="$($env:APP_VERSION).0" `
             -d BinDir="target/release" `
             -d SourceDir="." `
             -o requiescat-windows-x86_64.msi
@@ -131,12 +136,16 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      - name: Read package version
+        run: |
+          APP_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
+
       - name: Build Apple Silicon executables
         run: cargo build --locked --release --target aarch64-apple-darwin
 
       - name: Create Apple Silicon app bundle
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           APP="dist/Requiescat.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -147,7 +156,7 @@ jobs:
 
           cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c \
-            "Set :CFBundleShortVersionString $VERSION" \
+            "Set :CFBundleShortVersionString $APP_VERSION" \
             "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c \
             "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" \
@@ -247,6 +256,18 @@ jobs:
             org.freedesktop.Sdk//24.08 \
             org.freedesktop.Sdk.Extension.rust-stable//24.08
 
+      - name: Read package version
+        run: |
+          APP_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Stamp Linux app metadata version
+        run: |
+          RELEASE_DATE="$(date -u +%F)"
+          sed -i \
+            "s#</component>#  <releases>\\n    <release version=\"${APP_VERSION}\" date=\"${RELEASE_DATE}\"/>\\n  </releases>\\n</component>#" \
+            packaging/linux/app.requiescat.metainfo.xml
+
       - name: Build Flatpak bundle
         run: |
           flatpak-builder \
@@ -297,12 +318,13 @@ jobs:
 
       - name: Validate release version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-          if [ "$VERSION" != "$CARGO_VERSION" ]; then
-            echo "Tag version $VERSION does not match Cargo.toml $CARGO_VERSION" >&2
+          APP_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$TAG_VERSION" != "$APP_VERSION" ]; then
+            echo "Tag version $TAG_VERSION does not match Cargo.toml $APP_VERSION" >&2
             exit 1
           fi
+          echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
 
       - name: Build release manifest
         env:
@@ -310,14 +332,13 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           cd release-assets
-          VERSION="${TAG#v}"
           WINDOWS_SHA="$(sha256sum requiescat-windows-x86_64.msi | cut -d' ' -f1)"
           MACOS_SHA="$(sha256sum requiescat-macos-aarch64.zip | cut -d' ' -f1)"
           LINUX_SHA="$(sha256sum requiescat-linux-x86_64.flatpak | cut -d' ' -f1)"
           BASE_URL="https://github.com/${REPOSITORY}/releases/download/${TAG}"
 
           jq -n \
-            --arg version "$VERSION" \
+            --arg version "$APP_VERSION" \
             --arg notes_url "https://github.com/${REPOSITORY}/releases/tag/${TAG}" \
             --rawfile description_en ../packaging/release-notes/en.md \
             --rawfile description_ro ../packaging/release-notes/ro.md \
@@ -367,7 +388,7 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
           else
             gh release create "$GITHUB_REF_NAME" release-assets/* \
-              --title "Requiescat ${GITHUB_REF_NAME#v}" \
+              --title "Requiescat ${APP_VERSION}" \
               --generate-notes \
               --verify-tag
           fi
