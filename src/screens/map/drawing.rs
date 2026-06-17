@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use iced::widget::canvas;
 use iced::{Point, Rectangle};
 
 use super::Camera;
 use super::map_editor::CanvasState;
-use crate::models::{Cemetery, GraveId, GraveRectangle};
+use crate::models::{Cemetery, Grave, GraveId, GraveRectangle};
 
 pub fn grid(frame: &mut canvas::Frame, camera: &Camera, bounds: Rectangle) {
     const SQUARE_SIZE: f32 = 50.0;
@@ -102,12 +102,22 @@ pub fn graves(
     frame: &mut canvas::Frame,
     cemetery: &Cemetery,
     camera: &Camera,
+    bounds: Rectangle,
     selected_grave: Option<GraveId>,
     grave_label: impl Fn(GraveId) -> String,
 ) {
-    let labels_by_grave = grave_labels_by_grave(cemetery);
+    let visible_graves = cemetery
+        .graves()
+        .iter()
+        .filter(|grave| is_visible(grave, camera, bounds))
+        .collect::<Vec<_>>();
+    let visible_grave_ids = visible_graves
+        .iter()
+        .map(|grave| grave.id())
+        .collect::<HashSet<_>>();
+    let labels_by_grave = grave_labels_by_grave(cemetery, &visible_grave_ids);
 
-    for grave in cemetery.graves() {
+    for grave in visible_graves {
         let rectangle = grave.rectangle();
         let top_left = camera.world_to_screen(rectangle.top_left());
         let size = rectangle.size() * camera.zoom;
@@ -136,6 +146,16 @@ pub fn graves(
             );
         }
     }
+}
+
+fn is_visible(grave: &Grave, camera: &Camera, bounds: Rectangle) -> bool {
+    let rectangle = grave.rectangle();
+    let top_left = camera.world_to_screen(rectangle.top_left());
+    let size = rectangle.size() * camera.zoom;
+    let right = top_left.x + size.width;
+    let bottom = top_left.y + size.height;
+
+    right >= 0.0 && bottom >= 0.0 && top_left.x <= bounds.width && top_left.y <= bounds.height
 }
 
 fn grave_labels(
@@ -194,11 +214,17 @@ fn label_character_capacity(available_width: f32, font_size: f32) -> usize {
         .max(0.0) as usize
 }
 
-fn grave_labels_by_grave(cemetery: &Cemetery) -> HashMap<GraveId, Vec<String>> {
+fn grave_labels_by_grave(
+    cemetery: &Cemetery,
+    visible_grave_ids: &HashSet<GraveId>,
+) -> HashMap<GraveId, Vec<String>> {
     let mut labels = HashMap::new();
 
     for person in cemetery.people() {
-        if let Some(grave_id) = person.grave_id() {
+        if let Some(grave_id) = person
+            .grave_id()
+            .filter(|grave_id| visible_grave_ids.contains(grave_id))
+        {
             labels
                 .entry(grave_id)
                 .or_insert_with(Vec::new)

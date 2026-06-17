@@ -1004,6 +1004,7 @@ impl canvas::Program<Message> for LocalizedMapCanvas<'_> {
                 frame,
                 &self.editor.cemetery,
                 &self.editor.camera,
+                bounds,
                 self.editor.selected_grave,
                 |grave_id| {
                     self.localizer
