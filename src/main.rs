@@ -7,6 +7,7 @@ use iced::{
     Background, Border, Color, Element, Length, Shadow, Size, Subscription, Task, Theme, Vector,
     keyboard, window,
 };
+use requiescat::export::pdf::{PdfExportOptions, export_cemetery_map};
 use requiescat::localization::{Language, Localizer, MessageId};
 use requiescat::models::Cemetery;
 use requiescat::persistence::{
@@ -42,9 +43,11 @@ enum Message {
     NewPerson,
     OpenPersonDirectory,
     ExportActiveCemetery,
+    ExportActiveCemeteryPdf,
     StartMenu(StartMenuMessage),
     ImportPathChosen(Option<PathBuf>),
     ExportPathChosen(Option<PathBuf>),
+    PdfExportPathChosen(Option<PathBuf>),
     Editor(MapEditorMessage),
     SaveFinished {
         revision: u64,
@@ -95,6 +98,8 @@ enum AppStatus {
     ExportSaveFailed,
     CemeteryExported,
     CouldNotExportCemetery(String),
+    CemeteryPdfExported,
+    CouldNotExportCemeteryPdf(String),
     CouldNotRefreshCemeteries(String),
 }
 
@@ -118,6 +123,12 @@ impl AppStatus {
             Self::CouldNotExportCemetery(error) => {
                 localizer.value(MessageId::CouldNotExportCemetery, "error", error.as_str())
             }
+            Self::CemeteryPdfExported => localizer.text(MessageId::CemeteryPdfExported),
+            Self::CouldNotExportCemeteryPdf(error) => localizer.value(
+                MessageId::CouldNotExportCemeteryPdf,
+                "error",
+                error.as_str(),
+            ),
             Self::CouldNotRefreshCemeteries(error) => localizer.value(
                 MessageId::CouldNotRefreshCemeteries,
                 "error",
@@ -287,6 +298,12 @@ impl Requiescat {
                     return self.choose_export_path();
                 }
             }
+            Message::ExportActiveCemeteryPdf => {
+                if self.main_screen == MainScreen::MapEditor {
+                    self.app_menu = None;
+                    return self.choose_pdf_export_path();
+                }
+            }
             Message::StartMenu(message) => {
                 self.app_menu = None;
                 return self.update_start_menu(message);
@@ -299,6 +316,11 @@ impl Requiescat {
             Message::ExportPathChosen(path) => {
                 if let Some(destination) = path {
                     self.export_selected_cemetery(destination);
+                }
+            }
+            Message::PdfExportPathChosen(path) => {
+                if let Some(destination) = path {
+                    self.export_selected_cemetery_pdf(destination);
                 }
             }
             Message::SaveFinished { revision, result } => {
@@ -510,6 +532,10 @@ impl Requiescat {
                 (
                     self.localizer.text(MessageId::AppMenuExportDb),
                     Message::ExportActiveCemetery,
+                ),
+                (
+                    self.localizer.text(MessageId::AppMenuExportPdf),
+                    Message::ExportActiveCemeteryPdf,
                 ),
             ],
             AppMenu::View => vec![(
@@ -733,6 +759,30 @@ impl Requiescat {
         };
     }
 
+    fn export_selected_cemetery_pdf(&mut self, destination: PathBuf) {
+        if matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_))
+            && !self.save_active_cemetery()
+        {
+            self.status = Some(AppStatus::ExportSaveFailed);
+            return;
+        }
+
+        let options = PdfExportOptions {
+            title: self.active_cemetery_title(),
+            subtitle: self.localizer.text(MessageId::PdfExportSubtitle),
+            empty_message: self.localizer.text(MessageId::EmptyPdfMap),
+            footer: self.localizer.count(
+                MessageId::PdfExportFooter,
+                self.editor.cemetery().graves().len(),
+            ),
+        };
+
+        self.status = match export_cemetery_map(self.editor.cemetery(), &destination, &options) {
+            Ok(()) => Some(AppStatus::CemeteryPdfExported),
+            Err(error) => Some(AppStatus::CouldNotExportCemeteryPdf(error.to_string())),
+        };
+    }
+
     fn choose_export_path(&self) -> Task<Message> {
         let file_name = self
             .selected_cemetery
@@ -754,6 +804,32 @@ impl Requiescat {
             },
             Message::ExportPathChosen,
         )
+    }
+
+    fn choose_pdf_export_path(&self) -> Task<Message> {
+        let file_name = format!("{}.pdf", self.active_cemetery_title());
+
+        let filter = self.localizer.text(MessageId::FileFilterPdf);
+        Task::perform(
+            async move {
+                rfd::AsyncFileDialog::new()
+                    .add_filter(&filter, &["pdf"])
+                    .set_file_name(&file_name)
+                    .save_file()
+                    .await
+                    .map(|file| file.path().to_owned())
+            },
+            Message::PdfExportPathChosen,
+        )
+    }
+
+    fn active_cemetery_title(&self) -> String {
+        self.active_database
+            .as_deref()
+            .and_then(|path| path.file_stem())
+            .and_then(|name| name.to_str())
+            .unwrap_or("Cemetery")
+            .to_owned()
     }
 
     fn refresh_cemeteries(&mut self) {

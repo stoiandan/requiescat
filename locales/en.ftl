@@ -4,6 +4,7 @@ app-menu-file = File
 app-menu-view = View
 app-menu-new-person = New person
 app-menu-export-db = Export DB
+app-menu-export-pdf = Export to PDF
 app-menu-person-directory = Person directory
 
 unsaved-changes = Unsaved changes
@@ -64,6 +65,14 @@ assign = Assign
 born = Born { $date }
 
 file-filter-sqlite-cemetery = SQLite cemetery
+file-filter-pdf = PDF document
+pdf-export-subtitle = A0 landscape printable cemetery map
+empty-pdf-map = No graves to export
+pdf-export-footer =
+    { $count ->
+        [one] 1 grave
+       *[other] { $count } graves
+    }
 could-not-load-cemetery = Could not load cemetery: { $error }
 library-unavailable = The cemetery library is unavailable.
 cemetery-imported = Cemetery imported.
@@ -72,5 +81,7 @@ could-not-create-cemetery = Could not create cemetery: { $error }
 export-save-failed = Export cancelled because the cemetery could not be saved.
 cemetery-exported = Cemetery exported.
 could-not-export-cemetery = Could not export cemetery: { $error }
+cemetery-pdf-exported = Cemetery PDF exported.
+could-not-export-cemetery-pdf = Could not export cemetery PDF: { $error }
 could-not-refresh-cemeteries = Could not refresh cemeteries: { $error }
 save-failed = Save failed: { $error }

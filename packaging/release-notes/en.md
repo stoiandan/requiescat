@@ -1,1 +1,1 @@
-This release adds automatic update support, safer versioned database migrations, a Windows MSI installer, an Apple Silicon macOS app, and Linux Flatpak packaging.
+This release adds a polished A0 landscape PDF export for cemetery maps. The map editor File menu now includes Export to PDF, which renders the entire cemetery map from the saved cemetery data instead of the current zoom level or viewport.

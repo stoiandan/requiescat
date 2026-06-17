@@ -1,1 +1,1 @@
-Această versiune adaugă actualizări automate, migrări mai sigure și versionate pentru baza de date, un instalator MSI pentru Windows, o aplicație macOS pentru Apple Silicon și distribuție Flatpak pentru Linux.
+Această versiune adaugă export PDF în format A0 peisaj pentru hărțile cimitirelor. Meniul Fișier din editorul de hartă include acum Exportă PDF, iar exportul redă întreaga hartă din datele salvate ale cimitirului, nu nivelul curent de zoom sau zona vizibilă.

@@ -4,6 +4,7 @@ app-menu-file = Fișier
 app-menu-view = Vizualizare
 app-menu-new-person = Persoană nouă
 app-menu-export-db = Exportă BD
+app-menu-export-pdf = Exportă PDF
 app-menu-person-directory = Directorul persoanelor
 
 unsaved-changes = Modificări nesalvate
@@ -64,6 +65,15 @@ assign = Asociază
 born = Născut(ă) la { $date }
 
 file-filter-sqlite-cemetery = Cimitir SQLite
+file-filter-pdf = Document PDF
+pdf-export-subtitle = Hartă de cimitir pentru tipărire A0 peisaj
+empty-pdf-map = Nu există morminte de exportat
+pdf-export-footer =
+    { $count ->
+        [one] Un mormânt
+        [few] { $count } morminte
+       *[other] { $count } de morminte
+    }
 could-not-load-cemetery = Cimitirul nu a putut fi încărcat: { $error }
 library-unavailable = Biblioteca cimitirelor nu este disponibilă.
 cemetery-imported = Cimitir importat.
@@ -72,5 +82,7 @@ could-not-create-cemetery = Cimitirul nu a putut fi creat: { $error }
 export-save-failed = Exportul a fost anulat deoarece cimitirul nu a putut fi salvat.
 cemetery-exported = Cimitir exportat.
 could-not-export-cemetery = Cimitirul nu a putut fi exportat: { $error }
+cemetery-pdf-exported = PDF-ul cimitirului a fost exportat.
+could-not-export-cemetery-pdf = PDF-ul cimitirului nu a putut fi exportat: { $error }
 could-not-refresh-cemeteries = Lista cimitirelor nu a putut fi actualizată: { $error }
 save-failed = Salvarea a eșuat: { $error }
