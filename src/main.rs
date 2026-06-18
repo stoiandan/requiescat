@@ -281,16 +281,17 @@ impl Requiescat {
                 }
             }
             Message::NewPerson => {
-                return self.open_new_person_from_menu();
+                return self.run_map_editor_menu_action(Self::open_new_person_dialog);
             }
             Message::OpenPersonDirectory => {
-                return self.open_person_directory_from_menu();
+                return self.run_map_editor_menu_action(Self::open_person_directory);
             }
             Message::ExportActiveCemetery => {
-                return self.prompt_for_database_export_path_from_menu();
+                return self
+                    .run_map_editor_menu_action(|app| app.prompt_for_database_export_path());
             }
             Message::ExportActiveCemeteryPdf => {
-                return self.prompt_for_pdf_export_path_from_menu();
+                return self.run_map_editor_menu_action(|app| app.prompt_for_pdf_export_path());
             }
             Message::StartMenu(message) => {
                 self.close_app_menu();
@@ -506,39 +507,36 @@ impl Requiescat {
     }
 
     fn app_menu_dropdown<'a>(&'a self, menu: AppMenu) -> Element<'a, Message> {
+        const FILE_ACTIONS: &[(MessageId, Message)] = &[
+            (MessageId::AppMenuNewPerson, Message::NewPerson),
+            (MessageId::AppMenuExportDb, Message::ExportActiveCemetery),
+            (
+                MessageId::AppMenuExportPdf,
+                Message::ExportActiveCemeteryPdf,
+            ),
+        ];
+        const VIEW_ACTIONS: &[(MessageId, Message)] = &[(
+            MessageId::AppMenuPersonDirectory,
+            Message::OpenPersonDirectory,
+        )];
+
         let mut items = column![]
             .spacing(1)
             .padding([5, 0])
             .width(Length::Fixed(190.0));
 
-        let actions: Vec<(String, Message)> = match menu {
-            AppMenu::File => vec![
-                (
-                    self.localizer.text(MessageId::AppMenuNewPerson),
-                    Message::NewPerson,
-                ),
-                (
-                    self.localizer.text(MessageId::AppMenuExportDb),
-                    Message::ExportActiveCemetery,
-                ),
-                (
-                    self.localizer.text(MessageId::AppMenuExportPdf),
-                    Message::ExportActiveCemeteryPdf,
-                ),
-            ],
-            AppMenu::View => vec![(
-                self.localizer.text(MessageId::AppMenuPersonDirectory),
-                Message::OpenPersonDirectory,
-            )],
+        let actions = match menu {
+            AppMenu::File => FILE_ACTIONS,
+            AppMenu::View => VIEW_ACTIONS,
         };
 
         for (label, message) in actions {
             items = items.push(
-                button(text(label).size(13))
+                button(text(self.localizer.text(*label)).size(13))
                     .width(Length::Fill)
                     .padding([6, 12])
                     .style(app_menu_item_button)
-                    .on_press(message),
+                    .on_press(message.clone()),
             );
         }
 
@@ -563,40 +561,16 @@ impl Requiescat {
         self.app_menu = None;
     }
 
-    fn open_new_person_from_menu(&mut self) -> Task<Message> {
+    fn run_map_editor_menu_action(
+        &mut self,
+        action: impl FnOnce(&mut Self) -> Task<Message>,
+    ) -> Task<Message> {
         if !self.is_showing_map_editor() {
             return Task::none();
         }
 
         self.close_app_menu();
-        self.open_new_person_dialog()
-    }
-
-    fn open_person_directory_from_menu(&mut self) -> Task<Message> {
-        if !self.is_showing_map_editor() {
-            return Task::none();
-        }
-
-        self.close_app_menu();
-        self.open_person_directory()
-    }
-
-    fn prompt_for_database_export_path_from_menu(&mut self) -> Task<Message> {
-        if !self.is_showing_map_editor() {
-            return Task::none();
-        }
-
-        self.close_app_menu();
-        self.prompt_for_database_export_path()
-    }
-
-    fn prompt_for_pdf_export_path_from_menu(&mut self) -> Task<Message> {
-        if !self.is_showing_map_editor() {
-            return Task::none();
-        }
-
-        self.close_app_menu();
-        self.prompt_for_pdf_export_path()
+        action(self)
     }
 
     fn open_person_directory(&mut self) -> Task<Message> {
