@@ -168,63 +168,13 @@ impl MapEditor {
                 self.invalidate_map();
                 UpdateOutcome::Changed
             }
-            Message::UpdatePersonFirstName(id, value) => {
-                self.person_edits.entry(id).or_default().first_name = Some(value.clone());
-
-                if !value.trim().is_empty()
-                    && let Some(person) = self.cemetery.person_mut(id)
-                {
-                    person.set_first_name(value);
-                    self.invalidate_map();
-                    UpdateOutcome::Changed
-                } else {
-                    UpdateOutcome::Unchanged
-                }
-            }
-            Message::UpdatePersonLastName(id, value) => {
-                self.person_edits.entry(id).or_default().last_name = Some(value.clone());
-
-                if !value.trim().is_empty()
-                    && let Some(person) = self.cemetery.person_mut(id)
-                {
-                    person.set_last_name(value);
-                    self.invalidate_map();
-                    UpdateOutcome::Changed
-                } else {
-                    UpdateOutcome::Unchanged
-                }
-            }
+            Message::UpdatePersonFirstName(id, value) => self.update_person_first_name(id, value),
+            Message::UpdatePersonLastName(id, value) => self.update_person_last_name(id, value),
             Message::UpdatePersonDateOfBirth(id, value) => {
-                self.person_edits.entry(id).or_default().date_of_birth = Some(value.clone());
-
-                if let Ok(date) = PersonDate::parse(&value)
-                    && let Some(person) = self.cemetery.person_mut(id)
-                {
-                    person.set_date_of_birth(date);
-                    self.invalidate_map();
-                    UpdateOutcome::Changed
-                } else {
-                    UpdateOutcome::Unchanged
-                }
+                self.update_person_date_of_birth(id, value)
             }
             Message::UpdatePersonDateOfDecease(id, value) => {
-                self.person_edits.entry(id).or_default().date_of_decease = Some(value.clone());
-
-                let date = if value.trim().is_empty() {
-                    Some(None)
-                } else {
-                    PersonDate::parse(&value).ok().map(Some)
-                };
-
-                if let Some(date) = date
-                    && let Some(person) = self.cemetery.person_mut(id)
-                {
-                    person.set_date_of_decease(date);
-                    self.invalidate_map();
-                    UpdateOutcome::Changed
-                } else {
-                    UpdateOutcome::Unchanged
-                }
+                self.update_person_date_of_decease(id, value)
             }
             Message::CommitPendingChanges => UpdateOutcome::Commit,
         }
@@ -580,6 +530,70 @@ impl MapEditor {
 
     pub fn cemetery(&self) -> &Cemetery {
         &self.cemetery
+    }
+
+    fn update_person_first_name(&mut self, id: PersonId, value: String) -> UpdateOutcome {
+        self.person_edits.entry(id).or_default().first_name = Some(value.clone());
+        if value.trim().is_empty() {
+            return UpdateOutcome::Unchanged;
+        }
+
+        let Some(person) = self.cemetery.person_mut(id) else {
+            return UpdateOutcome::Unchanged;
+        };
+
+        person.set_first_name(value);
+        self.invalidate_map();
+        UpdateOutcome::Changed
+    }
+
+    fn update_person_last_name(&mut self, id: PersonId, value: String) -> UpdateOutcome {
+        self.person_edits.entry(id).or_default().last_name = Some(value.clone());
+        if value.trim().is_empty() {
+            return UpdateOutcome::Unchanged;
+        }
+
+        let Some(person) = self.cemetery.person_mut(id) else {
+            return UpdateOutcome::Unchanged;
+        };
+
+        person.set_last_name(value);
+        self.invalidate_map();
+        UpdateOutcome::Changed
+    }
+
+    fn update_person_date_of_birth(&mut self, id: PersonId, value: String) -> UpdateOutcome {
+        self.person_edits.entry(id).or_default().date_of_birth = Some(value.clone());
+        let Ok(date) = PersonDate::parse(&value) else {
+            return UpdateOutcome::Unchanged;
+        };
+
+        let Some(person) = self.cemetery.person_mut(id) else {
+            return UpdateOutcome::Unchanged;
+        };
+
+        person.set_date_of_birth(date);
+        self.invalidate_map();
+        UpdateOutcome::Changed
+    }
+
+    fn update_person_date_of_decease(&mut self, id: PersonId, value: String) -> UpdateOutcome {
+        self.person_edits.entry(id).or_default().date_of_decease = Some(value.clone());
+        let date = if value.trim().is_empty() {
+            None
+        } else if let Ok(date) = PersonDate::parse(&value) {
+            Some(date)
+        } else {
+            return UpdateOutcome::Unchanged;
+        };
+
+        let Some(person) = self.cemetery.person_mut(id) else {
+            return UpdateOutcome::Unchanged;
+        };
+
+        person.set_date_of_decease(date);
+        self.invalidate_map();
+        UpdateOutcome::Changed
     }
 
     pub(super) fn camera(&self) -> Camera {

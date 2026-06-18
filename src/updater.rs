@@ -135,7 +135,7 @@ struct InstallRequest {
 fn check_for_update_blocking() -> Result<Option<AvailableUpdate>, UpdateError> {
     let manifest_url =
         option_env!("REQUIESCAT_UPDATE_MANIFEST_URL").unwrap_or(DEFAULT_MANIFEST_URL);
-    let current_version = installed_application_version().unwrap_or_else(|_| package_version());
+    let current_version = installed_application_version().unwrap_or(package_version());
     let client = http_client()?;
     let manifest = client
         .get(manifest_url)

@@ -237,7 +237,7 @@ impl Requiescat {
             }
             Message::WindowClosed(id) => {
                 if Some(id) == self.main_window {
-                    if matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_)) {
+                    if self.has_unsaved_changes() {
                         self.save_active_cemetery();
                     }
                     return iced::exit();
@@ -255,7 +255,7 @@ impl Requiescat {
                     .retain(|(window_id, _)| *window_id != id);
             }
             Message::Keyboard(event) => {
-                if self.main_screen != MainScreen::MapEditor {
+                if !self.is_showing_map_editor() {
                     return Task::none();
                 }
 
@@ -268,11 +268,11 @@ impl Requiescat {
                 }
             }
             Message::LanguageSelected(language) => {
-                self.app_menu = None;
+                self.close_app_menu();
                 self.localizer.set_language(language);
             }
             Message::ToggleAppMenu(menu) => {
-                if self.main_screen == MainScreen::MapEditor {
+                if self.is_showing_map_editor() {
                     self.app_menu = if self.app_menu == Some(menu) {
                         None
                     } else {
@@ -281,31 +281,19 @@ impl Requiescat {
                 }
             }
             Message::NewPerson => {
-                if self.main_screen == MainScreen::MapEditor {
-                    self.app_menu = None;
-                    return self.open_new_person_dialog();
-                }
+                return self.open_new_person_from_menu();
             }
             Message::OpenPersonDirectory => {
-                if self.main_screen == MainScreen::MapEditor {
-                    self.app_menu = None;
-                    return self.open_person_directory();
-                }
+                return self.open_person_directory_from_menu();
             }
             Message::ExportActiveCemetery => {
-                if self.main_screen == MainScreen::MapEditor {
-                    self.app_menu = None;
-                    return self.choose_export_path();
-                }
+                return self.prompt_for_database_export_path_from_menu();
             }
             Message::ExportActiveCemeteryPdf => {
-                if self.main_screen == MainScreen::MapEditor {
-                    self.app_menu = None;
-                    return self.choose_pdf_export_path();
-                }
+                return self.prompt_for_pdf_export_path_from_menu();
             }
             Message::StartMenu(message) => {
-                self.app_menu = None;
+                self.close_app_menu();
                 return self.update_start_menu(message);
             }
             Message::ImportPathChosen(path) => {
@@ -567,6 +555,50 @@ impl Requiescat {
         ])
     }
 
+    fn is_showing_map_editor(&self) -> bool {
+        self.main_screen == MainScreen::MapEditor
+    }
+
+    fn close_app_menu(&mut self) {
+        self.app_menu = None;
+    }
+
+    fn open_new_person_from_menu(&mut self) -> Task<Message> {
+        if !self.is_showing_map_editor() {
+            return Task::none();
+        }
+
+        self.close_app_menu();
+        self.open_new_person_dialog()
+    }
+
+    fn open_person_directory_from_menu(&mut self) -> Task<Message> {
+        if !self.is_showing_map_editor() {
+            return Task::none();
+        }
+
+        self.close_app_menu();
+        self.open_person_directory()
+    }
+
+    fn prompt_for_database_export_path_from_menu(&mut self) -> Task<Message> {
+        if !self.is_showing_map_editor() {
+            return Task::none();
+        }
+
+        self.close_app_menu();
+        self.prompt_for_database_export_path()
+    }
+
+    fn prompt_for_pdf_export_path_from_menu(&mut self) -> Task<Message> {
+        if !self.is_showing_map_editor() {
+            return Task::none();
+        }
+
+        self.close_app_menu();
+        self.prompt_for_pdf_export_path()
+    }
+
     fn open_person_directory(&mut self) -> Task<Message> {
         if let Some(id) = self.person_directory_window {
             return window::gain_focus(id);
@@ -667,7 +699,7 @@ impl Requiescat {
                 );
             }
             StartMenuMessage::ExportSelected => {
-                return self.choose_export_path();
+                return self.prompt_for_database_export_path();
             }
         }
 
@@ -742,10 +774,7 @@ impl Requiescat {
     }
 
     fn export_selected_cemetery(&mut self, destination: PathBuf) {
-        if matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_))
-            && !self.save_active_cemetery()
-        {
-            self.status = Some(AppStatus::ExportSaveFailed);
+        if !self.save_changes_before_export() {
             return;
         }
 
@@ -760,10 +789,7 @@ impl Requiescat {
     }
 
     fn export_selected_cemetery_pdf(&mut self, destination: PathBuf) {
-        if matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_))
-            && !self.save_active_cemetery()
-        {
-            self.status = Some(AppStatus::ExportSaveFailed);
+        if !self.save_changes_before_export() {
             return;
         }
 
@@ -783,7 +809,7 @@ impl Requiescat {
         };
     }
 
-    fn choose_export_path(&self) -> Task<Message> {
+    fn prompt_for_database_export_path(&self) -> Task<Message> {
         let file_name = self
             .selected_cemetery
             .as_deref()
@@ -806,7 +832,7 @@ impl Requiescat {
         )
     }
 
-    fn choose_pdf_export_path(&self) -> Task<Message> {
+    fn prompt_for_pdf_export_path(&self) -> Task<Message> {
         let file_name = format!("{}.pdf", self.active_cemetery_title());
 
         let filter = self.localizer.text(MessageId::FileFilterPdf);
@@ -862,6 +888,19 @@ impl Requiescat {
                 false
             }
         }
+    }
+
+    fn save_changes_before_export(&mut self) -> bool {
+        if self.has_unsaved_changes() && !self.save_active_cemetery() {
+            self.status = Some(AppStatus::ExportSaveFailed);
+            false
+        } else {
+            true
+        }
+    }
+
+    fn has_unsaved_changes(&self) -> bool {
+        matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_))
     }
 
     fn mark_dirty(&mut self) {
