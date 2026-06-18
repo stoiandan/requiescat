@@ -14,7 +14,7 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 
 const DEFAULT_MANIFEST_URL: &str =
     "https://github.com/stoiandan/requiescat/releases/latest/download/release-manifest.json";
-const INSTALL_MODE_ARGUMENT: &str = "--install-update";
+const MACOS_INSTALL_MODE_ARGUMENT: &str = "--install-update";
 
 #[derive(Debug)]
 struct AvailableUpdate {
@@ -83,7 +83,7 @@ struct ReleaseAsset {
     file_name: String,
 }
 
-struct InstallRequest {
+struct MacosInstallRequest {
     archive: PathBuf,
     target: PathBuf,
     parent_pid: u32,
@@ -197,7 +197,7 @@ fn install_update_package(archive: &Path) -> Result<(), UpdateError> {
 
     let mut command = Command::new(&helper);
     command
-        .arg(INSTALL_MODE_ARGUMENT)
+        .arg(MACOS_INSTALL_MODE_ARGUMENT)
         .arg(archive)
         .arg(&target)
         .arg(std::process::id().to_string())
@@ -215,45 +215,85 @@ fn install_update_package(_archive: &Path) -> Result<(), UpdateError> {
 }
 
 pub fn run_launcher_mode_with_progress(
+    report: impl FnMut(LauncherProgress),
+) -> Result<(), UpdateError> {
+    run_launcher_for_current_platform(report)
+}
+
+#[cfg(target_os = "macos")]
+fn run_launcher_for_current_platform(
     mut report: impl FnMut(LauncherProgress),
 ) -> Result<(), UpdateError> {
-    if let Some(install_request) = check_installation_request()? {
-        report(LauncherProgress::Installing);
-        return install_update(install_request);
+    let arguments = std::env::args_os().collect::<Vec<_>>();
+
+    match macos_install_request_from_arguments(arguments.iter().cloned()) {
+        Ok(Some(install_request)) => {
+            report(LauncherProgress::Installing);
+            if let Err(error) = complete_macos_app_install(install_request) {
+                record_installer_failure(&error);
+                return Err(error);
+            }
+            return Ok(());
+        }
+        Ok(None) => {}
+        Err(error) => {
+            record_installer_failure(&error);
+            return Err(error);
+        }
     }
 
     remove_stale_helper();
+    run_user_launcher_mode(&arguments, &mut report)
+}
 
+#[cfg(target_os = "windows")]
+fn run_launcher_for_current_platform(
+    mut report: impl FnMut(LauncherProgress),
+) -> Result<(), UpdateError> {
     let arguments = std::env::args_os().collect::<Vec<_>>();
 
-    #[cfg(target_os = "windows")]
-    if let Some(installer) = msi_installer_argument(&arguments)? {
+    if let Some(installer) = windows_msi_install_request_from_arguments(&arguments)? {
         report(LauncherProgress::Installing);
-        return launch_msi_installer(&installer);
+        return complete_windows_msi_install(&installer);
     }
 
-    if has_launch_app_argument(&arguments) {
-        return launch_application(&mut report);
+    run_user_launcher_mode(&arguments, &mut report)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn run_launcher_for_current_platform(
+    mut report: impl FnMut(LauncherProgress),
+) -> Result<(), UpdateError> {
+    let arguments = std::env::args_os().collect::<Vec<_>>();
+    run_user_launcher_mode(&arguments, &mut report)
+}
+
+fn run_user_launcher_mode(
+    arguments: &[OsString],
+    report: &mut impl FnMut(LauncherProgress),
+) -> Result<(), UpdateError> {
+    if should_launch_without_update_check(arguments) {
+        return launch_application(report);
     }
 
-    match install_latest_update(&mut report) {
-        Ok(true) => Ok(()),
-        Ok(false) => launch_application(&mut report),
+    update_or_launch(report)
+}
+
+fn update_or_launch(report: &mut impl FnMut(LauncherProgress)) -> Result<(), UpdateError> {
+    report(LauncherProgress::CheckingForUpdates);
+
+    let update = match check_for_update_blocking() {
+        Ok(Some(update)) => update,
+        Ok(None) => {
+            report(LauncherProgress::UpToDate);
+            return launch_application(report);
+        }
         Err(error) => {
             report(LauncherProgress::CheckFailed {
                 error: error.to_string(),
             });
-            launch_application(&mut report)
+            return launch_application(report);
         }
-    }
-}
-
-fn install_latest_update(report: &mut impl FnMut(LauncherProgress)) -> Result<bool, UpdateError> {
-    report(LauncherProgress::CheckingForUpdates);
-
-    let Some(update) = check_for_update_blocking()? else {
-        report(LauncherProgress::UpToDate);
-        return Ok(false);
     };
 
     report(LauncherProgress::Downloading {
@@ -262,7 +302,7 @@ fn install_latest_update(report: &mut impl FnMut(LauncherProgress)) -> Result<bo
     let archive = download_update_blocking(&update)?;
     report(LauncherProgress::Installing);
     install_update_package(&archive)?;
-    Ok(true)
+    Ok(())
 }
 
 fn launch_application(report: &mut impl FnMut(LauncherProgress)) -> Result<(), UpdateError> {
@@ -271,12 +311,14 @@ fn launch_application(report: &mut impl FnMut(LauncherProgress)) -> Result<(), U
     Ok(())
 }
 
-fn has_launch_app_argument(arguments: &[OsString]) -> bool {
+fn should_launch_without_update_check(arguments: &[OsString]) -> bool {
     arguments.iter().any(|argument| argument == "--launch-app")
 }
 
 #[cfg(target_os = "windows")]
-fn msi_installer_argument(arguments: &[OsString]) -> Result<Option<PathBuf>, UpdateError> {
+fn windows_msi_install_request_from_arguments(
+    arguments: &[OsString],
+) -> Result<Option<PathBuf>, UpdateError> {
     let Some(index) = arguments
         .iter()
         .position(|argument| argument == "--install-msi")
@@ -292,7 +334,7 @@ fn msi_installer_argument(arguments: &[OsString]) -> Result<Option<PathBuf>, Upd
 }
 
 #[cfg(target_os = "windows")]
-fn launch_msi_installer(installer: &Path) -> Result<(), UpdateError> {
+fn complete_windows_msi_install(installer: &Path) -> Result<(), UpdateError> {
     use std::os::windows::process::CommandExt;
 
     Command::new("msiexec.exe")
@@ -307,23 +349,15 @@ fn launch_msi_installer(installer: &Path) -> Result<(), UpdateError> {
     Ok(())
 }
 
-fn check_installation_request() -> Result<Option<InstallRequest>, UpdateError> {
-    let request = install_request_from_arguments(std::env::args_os());
-    if let Err(error) = &request {
-        record_installer_failure(error);
-    }
-    request
-}
-
-fn install_request_from_arguments(
+fn macos_install_request_from_arguments(
     arguments: impl IntoIterator<Item = OsString>,
-) -> Result<Option<InstallRequest>, UpdateError> {
+) -> Result<Option<MacosInstallRequest>, UpdateError> {
     let mut arguments = arguments.into_iter();
     let _executable = arguments.next();
     let Some(mode) = arguments.next() else {
         return Ok(None);
     };
-    if mode != INSTALL_MODE_ARGUMENT {
+    if mode != MACOS_INSTALL_MODE_ARGUMENT {
         return Ok(None);
     }
 
@@ -342,7 +376,7 @@ fn install_request_from_arguments(
         .parse()
         .map_err(|_| UpdateError::InvalidManifest("Invalid parent process ID.".to_owned()))?;
 
-    Ok(Some(InstallRequest {
+    Ok(Some(MacosInstallRequest {
         archive: archive.into(),
         target: target.into(),
         parent_pid,
@@ -372,7 +406,7 @@ fn record_installer_failure(error: &UpdateError) {
 }
 
 #[cfg(target_os = "macos")]
-fn install_update(request: InstallRequest) -> Result<(), UpdateError> {
+fn complete_macos_app_install(request: MacosInstallRequest) -> Result<(), UpdateError> {
     wait_for_process_exit(request.parent_pid);
 
     let staging = std::env::temp_dir().join(format!(
@@ -397,7 +431,7 @@ fn install_update(request: InstallRequest) -> Result<(), UpdateError> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn install_update(_request: InstallRequest) -> Result<(), UpdateError> {
+fn complete_macos_app_install(_request: MacosInstallRequest) -> Result<(), UpdateError> {
     Err(UpdateError::UnsupportedPlatform)
 }
 
@@ -639,9 +673,9 @@ mod tests {
 
     #[test]
     fn detects_installer_mode_from_process_arguments() {
-        let request = install_request_from_arguments(vec![
+        let request = macos_install_request_from_arguments(vec![
             "requiescat".into(),
-            INSTALL_MODE_ARGUMENT.into(),
+            MACOS_INSTALL_MODE_ARGUMENT.into(),
             "update.zip".into(),
             "Requiescat.app".into(),
             "42".into(),
@@ -657,12 +691,12 @@ mod tests {
     #[test]
     fn ignores_non_installer_process_arguments() {
         assert!(
-            install_request_from_arguments(vec!["requiescat".into()])
+            macos_install_request_from_arguments(vec!["requiescat".into()])
                 .unwrap()
                 .is_none()
         );
         assert!(
-            install_request_from_arguments(vec!["requiescat".into(), "--launch-app".into()])
+            macos_install_request_from_arguments(vec!["requiescat".into(), "--launch-app".into()])
                 .unwrap()
                 .is_none()
         );
@@ -670,8 +704,10 @@ mod tests {
 
     #[test]
     fn detects_launch_app_argument() {
-        assert!(!has_launch_app_argument(&["requiescat-updater".into()]));
-        assert!(has_launch_app_argument(&[
+        assert!(!should_launch_without_update_check(&[
+            "requiescat-updater".into()
+        ]));
+        assert!(should_launch_without_update_check(&[
             "requiescat-updater".into(),
             "--launch-app".into()
         ]));
@@ -680,7 +716,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn parses_msi_installer_argument() {
-        let installer = msi_installer_argument(&[
+        let installer = windows_msi_install_request_from_arguments(&[
             "requiescat-updater".into(),
             "--install-msi".into(),
             "update.msi".into(),
