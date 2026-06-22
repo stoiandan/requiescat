@@ -437,24 +437,24 @@ fn table_columns(connection: &Connection, table: &str) -> Result<Vec<String>, Pe
 }
 
 #[derive(Debug, Clone)]
-pub struct GraveRow {
-    pub id: i64,
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-    pub color: String,
-    pub gps: Option<String>,
+struct GraveRow {
+    id: i64,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: String,
+    gps: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct PersonRow {
-    pub id: i64,
-    pub first_name: String,
-    pub last_name: String,
-    pub date_of_birth: String,
-    pub date_of_decease: String,
-    pub grave_id: Option<i64>,
+struct PersonRow {
+    id: i64,
+    first_name: String,
+    last_name: String,
+    date_of_birth: String,
+    date_of_decease: String,
+    grave_id: Option<i64>,
 }
 
 impl From<Grave> for GraveRow {

@@ -68,10 +68,6 @@ impl Grave {
             ..self
         }
     }
-
-    pub fn translate(&mut self, delta: Vector) {
-        *self = self.translated(delta);
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +94,10 @@ impl GraveColor {
 
     pub fn to_iced(self) -> iced::Color {
         iced::Color::from_rgb8(self.red, self.green, self.blue)
+    }
+
+    pub fn to_rgb8(self) -> (u8, u8, u8) {
+        (self.red, self.green, self.blue)
     }
 
     pub fn to_hex(self) -> String {

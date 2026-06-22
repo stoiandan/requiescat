@@ -1,6 +1,6 @@
 # Module Boundaries Know-How
 
-This project should be built around modules that protect clear boundaries. A module should expose a small, useful API in the language of the caller, while keeping its internal mechanics private.
+This project should be built around modules that protect clear boundaries. A module should expose a small, useful API in the language of the caller, while keeping its internal mechanics private. For broader code design guidance, see [Code Design Know-How](code-design.md).
 
 ## Core Principle
 

@@ -1,6 +1,6 @@
 # Functional Programming Know-How
 
-As much as it is feasible, this project should prefer functional programming and pure functions. Ease of reading and simplicity should always prevail. The goal is not to force every part of the code into a theoretical style. The goal is to make ordinary changes easier to reason about, easier to test, and less likely to surprise another part of the system.
+As much as it is feasible, this project should prefer functional programming and pure functions. Ease of reading and simplicity should always prevail. The goal is not to force every part of the code into a theoretical style. The goal is to make ordinary changes easier to reason about, easier to test, and less likely to surprise another part of the system. For broader code design guidance, see [Code Design Know-How](code-design.md).
 
 Pure code is especially valuable in the domain layer, data transformation code, validation logic, and anything that decides what should happen next. Side effects still belong in the system, but they should be explicit and kept near the boundaries that own them.
 

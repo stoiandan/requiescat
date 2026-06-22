@@ -578,11 +578,7 @@ impl MapEditor {
 
     fn update_person_date_of_decease(&mut self, id: PersonId, value: String) -> UpdateOutcome {
         self.person_edits.entry(id).or_default().date_of_decease = Some(value.clone());
-        let date = if value.trim().is_empty() {
-            None
-        } else if let Ok(date) = PersonDate::parse(&value) {
-            Some(date)
-        } else {
+        let Some(date) = parse_optional_person_date(&value) else {
             return UpdateOutcome::Unchanged;
         };
 
@@ -603,23 +599,20 @@ impl MapEditor {
     }
 
     fn update_grave_gps(&mut self, id: GraveId, value: String) -> UpdateOutcome {
+        if self.cemetery.grave(id).is_none() {
+            return UpdateOutcome::Unchanged;
+        }
+
         self.grave_gps_edits.insert(id, value.clone());
 
-        let gps = if value.trim().is_empty() {
-            None
-        } else if let Ok(gps) = GraveGps::parse(&value) {
-            Some(gps)
-        } else {
+        let Some(gps) = parse_optional_grave_gps(&value) else {
             return UpdateOutcome::Unchanged;
         };
 
-        if self.cemetery.update_grave_gps(id, gps) {
-            self.grave_gps_edits.remove(&id);
-            self.invalidate_map();
-            UpdateOutcome::Changed
-        } else {
-            UpdateOutcome::Unchanged
-        }
+        self.cemetery.update_grave_gps(id, gps);
+        self.grave_gps_edits.remove(&id);
+        self.invalidate_map();
+        UpdateOutcome::Changed
     }
 
     pub(super) fn camera(&self) -> Camera {
@@ -639,21 +632,19 @@ impl MapEditor {
     }
 
     pub fn can_submit_new_person(&self) -> bool {
-        self.new_person.is_valid()
+        self.new_person.details().is_some()
     }
 
     pub fn submit_new_person(&mut self) -> bool {
-        if !self.can_submit_new_person() {
+        let Some(details) = self.new_person.details() else {
             return false;
-        }
+        };
 
         let id = self.cemetery.create_person_with_details(
-            self.new_person.first_name.trim().to_owned(),
-            self.new_person.last_name.trim().to_owned(),
-            self.new_person
-                .date_of_birth()
-                .expect("new person should be valid before submit"),
-            self.new_person.date_of_decease(),
+            details.first_name,
+            details.last_name,
+            details.date_of_birth,
+            details.date_of_decease,
             self.new_person.grave_id,
         );
 
@@ -694,6 +685,13 @@ struct NewPersonDraft {
     grave_id: Option<GraveId>,
 }
 
+struct NewPersonDetails {
+    first_name: String,
+    last_name: String,
+    date_of_birth: PersonDate,
+    date_of_decease: Option<PersonDate>,
+}
+
 #[derive(Debug, Clone, Default)]
 struct PersonEditDraft {
     first_name: Option<String>,
@@ -703,23 +701,39 @@ struct PersonEditDraft {
 }
 
 impl NewPersonDraft {
-    fn is_valid(&self) -> bool {
-        !self.first_name.trim().is_empty()
-            && !self.last_name.trim().is_empty()
-            && self.date_of_birth().is_some()
-            && (self.date_of_decease.trim().is_empty() || self.date_of_decease().is_some())
-    }
+    fn details(&self) -> Option<NewPersonDetails> {
+        let first_name = non_empty_trimmed(&self.first_name)?;
+        let last_name = non_empty_trimmed(&self.last_name)?;
+        let date_of_birth = PersonDate::parse(&self.date_of_birth).ok()?;
+        let date_of_decease = parse_optional_person_date(&self.date_of_decease)?;
 
-    fn date_of_birth(&self) -> Option<PersonDate> {
-        PersonDate::parse(&self.date_of_birth).ok()
+        Some(NewPersonDetails {
+            first_name,
+            last_name,
+            date_of_birth,
+            date_of_decease,
+        })
     }
+}
 
-    fn date_of_decease(&self) -> Option<PersonDate> {
-        if self.date_of_decease.trim().is_empty() {
-            None
-        } else {
-            PersonDate::parse(&self.date_of_decease).ok()
-        }
+fn non_empty_trimmed(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn parse_optional_person_date(value: &str) -> Option<Option<PersonDate>> {
+    if value.trim().is_empty() {
+        Some(None)
+    } else {
+        PersonDate::parse(value).ok().map(Some)
+    }
+}
+
+fn parse_optional_grave_gps(value: &str) -> Option<Option<GraveGps>> {
+    if value.trim().is_empty() {
+        Some(None)
+    } else {
+        GraveGps::parse(value).ok().map(Some)
     }
 }
 

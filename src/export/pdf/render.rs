@@ -229,9 +229,9 @@ fn truncate_label(value: &str, max_characters: usize) -> String {
 }
 
 fn rgb(color: GraveColor) -> (f32, f32, f32) {
-    let hex = color.to_hex();
-    let red = u8::from_str_radix(&hex[1..3], 16).unwrap_or(0) as f32 / 255.0;
-    let green = u8::from_str_radix(&hex[3..5], 16).unwrap_or(0) as f32 / 255.0;
-    let blue = u8::from_str_radix(&hex[5..7], 16).unwrap_or(0) as f32 / 255.0;
+    let (red, green, blue) = color.to_rgb8();
+    let red = red as f32 / 255.0;
+    let green = green as f32 / 255.0;
+    let blue = blue as f32 / 255.0;
     (red, green, blue)
 }

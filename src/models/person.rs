@@ -61,17 +61,9 @@ impl Person {
         self
     }
 
-    pub fn set_first_name(&mut self, value: String) {
-        *self = self.clone().with_first_name(value);
-    }
-
     pub fn with_last_name(mut self, value: String) -> Self {
         self.last_name = value;
         self
-    }
-
-    pub fn set_last_name(&mut self, value: String) {
-        *self = self.clone().with_last_name(value);
     }
 
     pub fn with_date_of_birth(mut self, value: PersonDate) -> Self {
@@ -79,17 +71,9 @@ impl Person {
         self
     }
 
-    pub fn set_date_of_birth(&mut self, value: PersonDate) {
-        *self = self.clone().with_date_of_birth(value);
-    }
-
     pub fn with_date_of_decease(mut self, value: Option<PersonDate>) -> Self {
         self.date_of_decease = value;
         self
-    }
-
-    pub fn set_date_of_decease(&mut self, value: Option<PersonDate>) {
-        *self = self.clone().with_date_of_decease(value);
     }
 
     pub fn assigned_to_grave(mut self, grave_id: GraveId) -> Self {
@@ -97,17 +81,9 @@ impl Person {
         self
     }
 
-    pub fn assign_to_grave(&mut self, grave_id: GraveId) {
-        *self = self.clone().assigned_to_grave(grave_id);
-    }
-
     pub fn unassigned_from_grave(mut self) -> Self {
         self.grave_id = None;
         self
-    }
-
-    pub fn unassign_from_grave(&mut self) {
-        *self = self.clone().unassigned_from_grave();
     }
 
     pub fn display_name(&self) -> String {
@@ -162,25 +138,6 @@ mod tests {
         assert!(person.matches_query("ADA"));
         assert!(person.matches_query("27-11-1852"));
         assert!(!person.matches_query("hopper"));
-    }
-
-    #[test]
-    fn assign_and_unassign_grave() {
-        let mut person = Person::from_parts(
-            PersonId::new(1),
-            "Ada".to_owned(),
-            "Lovelace".to_owned(),
-            PersonDate::parse("10-12-1815").unwrap(),
-            None,
-            None,
-        );
-        let grave_id = GraveId::new(7);
-
-        person.assign_to_grave(grave_id);
-        assert_eq!(person.grave_id(), Some(grave_id));
-
-        person.unassign_from_grave();
-        assert_eq!(person.grave_id(), None);
     }
 
     #[test]

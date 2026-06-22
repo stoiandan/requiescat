@@ -46,10 +46,6 @@ impl GraveRectangle {
             ..self
         }
     }
-
-    pub fn translate(&mut self, delta: Vector) {
-        *self = self.translated(delta);
-    }
 }
 
 #[cfg(test)]
@@ -82,17 +78,6 @@ mod tests {
             GraveRectangle::from_top_left_size(Point::new(10.0, 20.0), Size::new(30.0, 40.0));
 
         assert_eq!(rectangle.center(), Point::new(25.0, 40.0));
-    }
-
-    #[test]
-    fn translate_moves_only_the_top_left_corner() {
-        let mut rectangle =
-            GraveRectangle::from_top_left_size(Point::new(10.0, 20.0), Size::new(30.0, 40.0));
-
-        rectangle.translate(Vector::new(-5.0, 7.5));
-
-        assert_eq!(rectangle.top_left(), Point::new(5.0, 27.5));
-        assert_eq!(rectangle.size(), Size::new(30.0, 40.0));
     }
 
     #[test]
