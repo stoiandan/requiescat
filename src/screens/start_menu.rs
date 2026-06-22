@@ -63,50 +63,7 @@ fn landing_page<'a>(localizer: &'a Localizer, state: &ViewState<'a>) -> Element<
         count => localizer.count(MessageId::LibraryCount, count),
     };
 
-    let brand = container(
-        column![
-            row![
-                container(text("R").size(18).color(BACKGROUND))
-                    .width(42)
-                    .height(42)
-                    .align_x(Alignment::Center)
-                    .align_y(Alignment::Center)
-                    .style(|_| container::Style {
-                        background: Some(Background::Color(ACCENT)),
-                        border: Border {
-                            radius: 10.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }),
-                text("Requiescat").size(17).color(TEXT_PRIMARY)
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-            column![
-                text(localizer.text(MessageId::BrandTagline))
-                    .size(24)
-                    .line_height(1.15)
-                    .color(TEXT_PRIMARY),
-                text(localizer.text(MessageId::BrandDescription))
-                    .size(13)
-                    .line_height(1.4)
-                    .color(TEXT_MUTED)
-            ]
-            .spacing(10),
-            text(library_summary).size(12).color(TEXT_MUTED)
-        ]
-        .spacing(24),
-    )
-    .width(Length::Fixed(270.0))
-    .height(Length::Fill)
-    .padding(28)
-    .style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgb(0.04, 0.14, 0.145))),
-        ..Default::default()
-    });
-
-    let heading = localizer.text(MessageId::SetupLibrary);
+    let heading = "Requiescat";
 
     let mut action_buttons = column![].spacing(10);
 
@@ -164,7 +121,7 @@ fn landing_page<'a>(localizer: &'a Localizer, state: &ViewState<'a>) -> Element<
     .height(Length::Fill)
     .padding(28);
 
-    let panel = container(row![brand, actions])
+    let panel = container(actions)
         .width(Length::Fill)
         .height(Length::Fill)
         .max_height(410)

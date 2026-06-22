@@ -23,7 +23,6 @@ library-count =
 brand-tagline = Cemetery records,
     carefully preserved.
 brand-description = Manage maps and records from one secure library.
-setup-library = Set up your library
 welcome-back = Welcome back
 welcome-back-description = Choose where you would like to continue.
 create-new-cemetery = Create new cemetery

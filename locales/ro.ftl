@@ -23,7 +23,6 @@ library-count =
     }
 brand-tagline = Evidența cimitirelor
 brand-description = Administrează hărți și înregistrări dintr-o bibliotecă.
-setup-library = Configurează biblioteca
 welcome-back = Bine ai revenit
 welcome-back-description = Alege unde dorești să continui.
 create-new-cemetery = Creează un cimitir nou
@@ -32,7 +31,7 @@ cemeteries = Cimitire
 open-cemetery = Deschide un cimitir
 export-cemetery = Exportă cimitirul
 export-named-cemetery = Exportă { $name }
-create-cemetery = Creează cimitirul
+create-cemetery = Cimitir nou
 create-cemetery-description = Introdu un nume pentru cimitir.
 cemetery-name = Numele cimitirului
 back-to-menu = Înapoi
@@ -71,7 +70,7 @@ tool-select = Selectează mormântul
 tool-draw = Desenează mormântul
 tool-stamp-grave = Plasează mormântul
 tool-grab = Mută morninte și/sau navighează pe hartă
-tool-grid = Arată/ascunde grila
+tool-grid = Arată/ascunde axele
 tool-erase = Șterge mormântul
 tool-grave-color = Culoarea mormântului
 tool-color-swatch = Alege culoarea
@@ -87,7 +86,7 @@ pdf-export-footer =
        *[other] { $count } de morminte
     }
 could-not-load-cemetery = Cimitirul nu a putut fi încărcat: { $error }
-library-unavailable = Biblioteca cimitirelor nu este disponibilă.
+library-unavailable = Biblioteca nu este disponibilă.
 cemetery-imported = Cimitir importat.
 could-not-import-cemetery = Cimitirul nu a putut fi importat: { $error }
 could-not-create-cemetery = Cimitirul nu a putut fi creat: { $error }
