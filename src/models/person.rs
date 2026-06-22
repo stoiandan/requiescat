@@ -137,6 +137,8 @@ mod tests {
         assert!(person.matches_query("lovelace"));
         assert!(person.matches_query("ADA"));
         assert!(person.matches_query("27-11-1852"));
+        assert!(person.matches_query("27-11"));
+        assert!(person.matches_query("1852"));
         assert!(!person.matches_query("hopper"));
     }
 
