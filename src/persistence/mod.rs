@@ -1,13 +1,12 @@
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use iced::{Point, Size};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, backup::Backup, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 use crate::models::{
-    Cemetery, Grave, GraveColor, GraveId, GraveRectangle, Person, PersonDate, PersonId,
+    Cemetery, Grave, GraveColor, GraveGps, GraveId, GraveRectangle, Person, PersonDate, PersonId,
 };
 
 const APPLICATION_ID: &str = "requiescat";
@@ -148,10 +147,6 @@ impl SqliteCemeteryRepository {
     }
 
     fn writable_connection(&self) -> Result<Connection, PersistenceError> {
-        if self.path.exists() {
-            self.migrate_if_needed()?;
-        }
-
         let connection = Connection::open(&self.path)?;
         configure_connection(&connection)?;
         if !table_exists(&connection, "requiescat_metadata")? {
@@ -159,44 +154,21 @@ impl SqliteCemeteryRepository {
         }
         Ok(connection)
     }
-
-    fn migrate_if_needed(&self) -> Result<Option<PathBuf>, PersistenceError> {
-        let connection = self.read_only_connection()?;
-        validate_compatible_schema(&connection)?;
-        let version = schema_version(&connection)?;
-        drop(connection);
-
-        if version == CURRENT_SCHEMA_VERSION {
-            return Ok(None);
-        }
-
-        ensure_migration_path(version)?;
-        let backup_path = migration_backup_path(&self.path, version, CURRENT_SCHEMA_VERSION);
-        backup_database(&self.path, &backup_path)?;
-
-        let mut connection = Connection::open(&self.path)?;
-        configure_connection(&connection)?;
-        migrate_schema(&mut connection, version)?;
-        validate_current_schema(&connection)?;
-
-        Ok(Some(backup_path))
-    }
 }
 
 impl CemeteryRepository for SqliteCemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError> {
-        self.migrate_if_needed()?;
         let connection = self.read_only_connection()?;
         validate_current_schema(&connection)?;
 
         let graves = {
-            let has_color = column_exists(&connection, "graves", "color")?;
-            let query = if has_color {
-                "SELECT id, x, y, width, height, color FROM graves ORDER BY id"
-            } else {
-                "SELECT id, x, y, width, height, '' FROM graves ORDER BY id"
-            };
-            let mut statement = connection.prepare(query)?;
+            let mut statement = connection.prepare(
+                "
+                SELECT id, x, y, width, height, color, gps
+                FROM graves
+                ORDER BY id
+                ",
+            )?;
             let rows = statement.query_map([], |row| {
                 Ok(GraveRow {
                     id: row.get(0)?,
@@ -205,13 +177,14 @@ impl CemeteryRepository for SqliteCemeteryRepository {
                     width: row.get(3)?,
                     height: row.get(4)?,
                     color: row.get(5)?,
+                    gps: row.get(6)?,
                 })
             })?;
 
             rows.collect::<Result<Vec<_>, _>>()?
                 .into_iter()
-                .map(Grave::from)
-                .collect()
+                .map(Grave::try_from)
+                .collect::<Result<Vec<_>, _>>()?
         };
 
         let people = {
@@ -245,7 +218,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
 
     fn save(&mut self, cemetery: &Cemetery) -> Result<(), PersistenceError> {
         let mut connection = self.writable_connection()?;
-        ensure_grave_color_column(&connection)?;
+        validate_current_schema(&connection)?;
         let transaction = connection.transaction()?;
 
         transaction.execute("DELETE FROM persons", [])?;
@@ -254,15 +227,15 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         {
             let mut statement = transaction.prepare(
                 "
-                INSERT INTO graves (id, x, y, width, height, color)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                INSERT INTO graves (id, x, y, width, height, color, gps)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 ",
             )?;
 
             for grave in cemetery.graves().iter().copied() {
                 let row = GraveRow::from(grave);
                 statement.execute(params![
-                    row.id, row.x, row.y, row.width, row.height, row.color
+                    row.id, row.x, row.y, row.width, row.height, row.color, row.gps
                 ])?;
             }
         }
@@ -315,7 +288,8 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
             y REAL NOT NULL,
             width REAL NOT NULL,
             height REAL NOT NULL,
-            color TEXT NOT NULL DEFAULT '#a61f28'
+            color TEXT NOT NULL DEFAULT '#a61f28',
+            gps TEXT
         );
 
         CREATE TABLE IF NOT EXISTS persons (
@@ -359,24 +333,13 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
     Ok(())
 }
 
-fn validate_compatible_schema(connection: &Connection) -> Result<(), PersistenceError> {
-    if table_exists(connection, "requiescat_metadata")? {
-        let application = metadata_value(connection, "application")?;
-        if application.as_deref() != Some(APPLICATION_ID) {
-            return Err(PersistenceError::InvalidData(
-                "This SQLite file is not a Requiescat cemetery.".to_owned(),
-            ));
-        }
-
-        let version = schema_version(connection)?;
-        if version > CURRENT_SCHEMA_VERSION {
-            return Err(PersistenceError::InvalidData(format!(
-                "This cemetery uses schema version {version}, but this version of Requiescat supports up to version {CURRENT_SCHEMA_VERSION}."
-            )));
-        }
-    }
-
-    validate_table_columns(connection, "graves", &["id", "x", "y", "width", "height"])?;
+fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceError> {
+    validate_table_columns(connection, "requiescat_metadata", &["key", "value"])?;
+    validate_table_columns(
+        connection,
+        "graves",
+        &["id", "x", "y", "width", "height", "color", "gps"],
+    )?;
     validate_table_columns(
         connection,
         "persons",
@@ -389,11 +352,18 @@ fn validate_compatible_schema(connection: &Connection) -> Result<(), Persistence
             "grave_id",
         ],
     )?;
-    Ok(())
-}
+    validate_table_columns(
+        connection,
+        "requiescat_migrations",
+        &["version", "applied_at"],
+    )?;
 
-fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceError> {
-    validate_compatible_schema(connection)?;
+    let application = metadata_value(connection, "application")?;
+    if application.as_deref() != Some(APPLICATION_ID) {
+        return Err(PersistenceError::InvalidData(
+            "This SQLite file is not a Requiescat cemetery.".to_owned(),
+        ));
+    }
 
     let version = schema_version(connection)?;
     if version != CURRENT_SCHEMA_VERSION {
@@ -402,18 +372,10 @@ fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceErr
         )));
     }
 
-    validate_table_columns(
-        connection,
-        "requiescat_migrations",
-        &["version", "applied_at"],
-    )
+    Ok(())
 }
 
 fn schema_version(connection: &Connection) -> Result<u32, PersistenceError> {
-    if !table_exists(connection, "requiescat_metadata")? {
-        return Ok(0);
-    }
-
     let version = metadata_value(connection, "schema_version")?.ok_or_else(|| {
         PersistenceError::InvalidData("The cemetery schema version is missing.".to_owned())
     })?;
@@ -421,63 +383,6 @@ fn schema_version(connection: &Connection) -> Result<u32, PersistenceError> {
     version.parse().map_err(|_| {
         PersistenceError::InvalidData(format!("Invalid cemetery schema version: {version}"))
     })
-}
-
-fn migrate_schema(connection: &mut Connection, from_version: u32) -> Result<(), PersistenceError> {
-    ensure_migration_path(from_version)?;
-    let transaction = connection.transaction()?;
-
-    // Add ordered migrations here when CURRENT_SCHEMA_VERSION first increases.
-    let migrated_version = from_version;
-
-    if migrated_version != CURRENT_SCHEMA_VERSION {
-        return Err(PersistenceError::InvalidData(format!(
-            "No migration path from schema version {from_version} to {CURRENT_SCHEMA_VERSION}."
-        )));
-    }
-
-    transaction.commit()?;
-    Ok(())
-}
-
-fn ensure_migration_path(from_version: u32) -> Result<(), PersistenceError> {
-    if from_version == CURRENT_SCHEMA_VERSION {
-        Ok(())
-    } else {
-        Err(PersistenceError::InvalidData(format!(
-            "No migration path from schema version {from_version} to {CURRENT_SCHEMA_VERSION}."
-        )))
-    }
-}
-
-fn backup_database(source: &Path, destination: &Path) -> Result<(), PersistenceError> {
-    let source = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let mut destination = Connection::open(destination)?;
-    let backup = Backup::new(&source, &mut destination)?;
-    backup.run_to_completion(32, Duration::from_millis(10), None)?;
-    Ok(())
-}
-
-fn migration_backup_path(source: &Path, from_version: u32, to_version: u32) -> PathBuf {
-    let directory = source.parent().unwrap_or_else(|| Path::new("."));
-    let stem = source
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("cemetery");
-    let extension = source
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or("sqlite");
-    let base = format!("{stem}.before-schema-{from_version}-to-{to_version}");
-    let mut destination = directory.join(format!("{base}.{extension}"));
-    let mut suffix = 2;
-
-    while destination.exists() {
-        destination = directory.join(format!("{base}-{suffix}.{extension}"));
-        suffix += 1;
-    }
-
-    destination
 }
 
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, PersistenceError> {
@@ -497,27 +402,6 @@ fn metadata_value(connection: &Connection, key: &str) -> Result<Option<String>, 
             |row| row.get(0),
         )
         .optional()?)
-}
-
-fn ensure_grave_color_column(connection: &Connection) -> Result<(), PersistenceError> {
-    if !column_exists(connection, "graves", "color")? {
-        connection.execute(
-            "ALTER TABLE graves ADD COLUMN color TEXT NOT NULL DEFAULT '#a61f28'",
-            [],
-        )?;
-    }
-
-    Ok(())
-}
-
-fn column_exists(
-    connection: &Connection,
-    table: &str,
-    column: &str,
-) -> Result<bool, PersistenceError> {
-    Ok(table_columns(connection, table)?
-        .iter()
-        .any(|existing| existing == column))
 }
 
 fn validate_table_columns(
@@ -560,6 +444,7 @@ pub struct GraveRow {
     pub width: f32,
     pub height: f32,
     pub color: String,
+    pub gps: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -585,20 +470,37 @@ impl From<Grave> for GraveRow {
             width: size.width,
             height: size.height,
             color: grave.color().to_hex(),
+            gps: grave.gps().map(|gps| gps.to_string()),
         }
     }
 }
 
-impl From<GraveRow> for Grave {
-    fn from(row: GraveRow) -> Self {
-        Grave::with_color(
+impl TryFrom<GraveRow> for Grave {
+    type Error = PersistenceError;
+
+    fn try_from(row: GraveRow) -> Result<Self, Self::Error> {
+        let gps = row
+            .gps
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| {
+                GraveGps::parse(&value).map_err(|_| {
+                    PersistenceError::InvalidData(format!(
+                        "Grave {} has invalid GPS coordinates: {}",
+                        row.id, value
+                    ))
+                })
+            })
+            .transpose()?;
+
+        Ok(Grave::from_parts(
             GraveId::new(row.id),
             GraveRectangle::from_top_left_size(
                 Point::new(row.x, row.y),
                 Size::new(row.width, row.height),
             ),
             GraveColor::from_hex(&row.color).unwrap_or_default(),
-        )
+            gps,
+        ))
     }
 }
 
@@ -901,6 +803,75 @@ mod tests {
     }
 
     #[test]
+    fn database_missing_current_grave_columns_is_rejected() {
+        let path = std::env::temp_dir().join(format!(
+            "requiescat-missing-grave-columns-test-{}.sqlite",
+            std::process::id()
+        ));
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE requiescat_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                INSERT INTO requiescat_metadata (key, value)
+                VALUES ('application', 'requiescat'), ('schema_version', '1');
+
+                CREATE TABLE graves (
+                    id INTEGER PRIMARY KEY,
+                    x REAL NOT NULL,
+                    y REAL NOT NULL,
+                    width REAL NOT NULL,
+                    height REAL NOT NULL
+                );
+                CREATE TABLE persons (
+                    id INTEGER PRIMARY KEY,
+                    first_name TEXT NOT NULL,
+                    last_name TEXT NOT NULL,
+                    date_of_birth TEXT NOT NULL,
+                    date_of_decease TEXT,
+                    grave_id INTEGER REFERENCES graves(id) ON DELETE SET NULL
+                );
+                CREATE TABLE requiescat_migrations (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO requiescat_migrations (version) VALUES (1);
+                ",
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(SqliteCemeteryRepository::new(path.clone()).load().is_err());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn invalid_persisted_grave_gps_is_rejected() {
+        let path = std::env::temp_dir().join(format!(
+            "requiescat-invalid-gps-test-{}.sqlite",
+            std::process::id()
+        ));
+        let connection = Connection::open(&path).unwrap();
+        initialize_schema(&connection).unwrap();
+        connection
+            .execute(
+                "
+                INSERT INTO graves (id, x, y, width, height, color, gps)
+                VALUES (1, 0.0, 0.0, 10.0, 20.0, '#a61f28', '91° 0′ 0″ N, 0° 0′ 0″ W')
+                ",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(SqliteCemeteryRepository::new(path.clone()).load().is_err());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn cemetery_file_name_validates_and_normalizes_names() {
         assert_eq!(
             cemetery_file_name("  Central Cemetery  ").unwrap(),
@@ -952,6 +923,8 @@ mod tests {
             GraveRectangle::from_top_left_size(Point::new(12.0, 24.0), Size::new(40.0, 80.0)),
             grave_color,
         );
+        let grave_gps = GraveGps::parse("51° 30′ 26.64″ N, 0° 7′ 40.08″ W").unwrap();
+        cemetery.update_grave_gps(grave_id, Some(grave_gps));
         cemetery.create_person_with_details(
             "Ada".to_owned(),
             "Lovelace".to_owned(),
@@ -966,6 +939,10 @@ mod tests {
 
         assert_eq!(loaded.graves().len(), 1);
         assert_eq!(loaded.grave(grave_id).map(Grave::color), Some(grave_color));
+        assert_eq!(
+            loaded.grave(grave_id).map(Grave::gps),
+            Some(Some(grave_gps))
+        );
         assert_eq!(loaded.search_people("").len(), 1);
         assert_eq!(loaded.search_people("Ada")[0].grave_id(), Some(grave_id));
         assert_eq!(

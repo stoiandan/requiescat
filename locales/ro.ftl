@@ -55,6 +55,7 @@ date-of-decease-example = Data decesului, ex. 30-04-1996
 date-of-birth = Data nașterii
 date-of-decease = Data decesului
 grave = Mormântul { $grave }
+grave-gps = GPS, ex. 51° 30′ 26.64″ N, 0° 7′ 40.08″ W
 grave-canvas = mormântul { $grave }
 no-persons-associated = Nicio persoană asociată
 persons = Persoane

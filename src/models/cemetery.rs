@@ -1,8 +1,10 @@
+use std::collections::HashSet;
+
 use iced::Vector;
 
 use super::{
-    CemeteryMap, Grave, GraveColor, GraveId, GraveRectangle, Person, PersonDate, PersonDirectory,
-    PersonId,
+    CemeteryMap, Grave, GraveColor, GraveGps, GraveId, GraveRectangle, Person, PersonDate,
+    PersonDirectory, PersonId,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -12,16 +14,8 @@ pub struct Cemetery {
 }
 
 impl Cemetery {
-    pub fn from_records(graves: Vec<Grave>, mut people: Vec<Person>) -> Self {
-        for person in &mut people {
-            if person
-                .grave_id()
-                .is_some_and(|grave_id| !graves.iter().any(|grave| grave.id() == grave_id))
-            {
-                person.unassign_from_grave();
-            }
-        }
-
+    pub fn from_records(graves: Vec<Grave>, people: Vec<Person>) -> Self {
+        let people = people_with_valid_grave_assignments(people, &graves);
         Self {
             map: CemeteryMap::from_graves(graves),
             people: PersonDirectory::from_people(people),
@@ -43,6 +37,10 @@ impl Cemetery {
 
     pub fn move_grave(&mut self, id: GraveId, delta: Vector) {
         self.map.move_grave(id, delta);
+    }
+
+    pub fn update_grave_gps(&mut self, id: GraveId, gps: Option<GraveGps>) -> bool {
+        self.map.update_grave_gps(id, gps)
     }
 
     pub fn grave_at(&self, point: iced::Point) -> Option<GraveId> {
@@ -100,14 +98,32 @@ impl Cemetery {
         self.people.person(id)
     }
 
-    pub fn person_mut(&mut self, id: PersonId) -> Option<&mut Person> {
-        self.people.person_mut(id)
+    pub fn update_person(&mut self, id: PersonId, update: impl FnOnce(Person) -> Person) -> bool {
+        self.people.update_person(id, update)
     }
 
     pub fn grave_for_person(&self, person_id: PersonId) -> Option<&Grave> {
         let grave_id = self.person(person_id)?.grave_id()?;
         self.grave(grave_id)
     }
+}
+
+fn people_with_valid_grave_assignments(people: Vec<Person>, graves: &[Grave]) -> Vec<Person> {
+    let grave_ids = graves.iter().map(Grave::id).collect::<HashSet<_>>();
+
+    people
+        .into_iter()
+        .map(|person| {
+            if person
+                .grave_id()
+                .is_some_and(|grave_id| !grave_ids.contains(&grave_id))
+            {
+                person.unassigned_from_grave()
+            } else {
+                person
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

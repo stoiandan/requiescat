@@ -1,6 +1,6 @@
 # Functional Programming Know-How
 
-As much as it is feasible, this project should prefer functional programming and pure functions. The goal is not to force every part of the code into a theoretical style. The goal is to make ordinary changes easier to reason about, easier to test, and less likely to surprise another part of the system.
+As much as it is feasible, this project should prefer functional programming and pure functions. Ease of reading and simplicity should always prevail. The goal is not to force every part of the code into a theoretical style. The goal is to make ordinary changes easier to reason about, easier to test, and less likely to surprise another part of the system.
 
 Pure code is especially valuable in the domain layer, data transformation code, validation logic, and anything that decides what should happen next. Side effects still belong in the system, but they should be explicit and kept near the boundaries that own them.
 
@@ -32,6 +32,22 @@ Functional style helps us:
 - Keep module boundaries honest by making side effects visible.
 
 This does not mean avoiding mutation everywhere. It means choosing mutation deliberately, in places where it makes ownership, performance, or API shape clearer.
+
+## Readability Comes First
+
+Functional style is a tool, not a contest. If a pure transformation, iterator chain, helper function, or abstraction makes the code harder to read than a straightforward mutable block, prefer the straightforward code.
+
+Choose the shape that makes the rule easiest to see:
+
+- Prefer simple control flow over clever composition.
+- Prefer direct names over abstract helper names.
+- Prefer a small local mutation over a tangled chain of transformations.
+- Prefer fewer moving parts when the behavior is already obvious.
+- Prefer code that the next maintainer can change confidently.
+
+Pure functions are valuable because they make code clearer and easier to test. When they stop doing that, simplicity wins.
+
+When in doubt, write the boring version first. Extract a pure function only when it gives a real rule a good name, removes meaningful duplication, or makes testing materially easier.
 
 ## Prefer Pure Domain Operations
 
@@ -179,7 +195,7 @@ Good candidates for small pure functions:
 - Mapping persistence rows into domain values, after the rows are fetched.
 - Mapping domain values into persistence records, before the records are written.
 
-Avoid splitting code so finely that the reader has to jump through five files to understand one rule. The point is clarity, not ceremony.
+Avoid splitting code so finely that the reader has to jump through five files to understand one rule. The point is clarity, not ceremony. A readable inline block is better than a pure helper whose name and call site obscure the actual behavior.
 
 ## Keep Error Handling Explicit
 
@@ -223,5 +239,6 @@ When reviewing changes, look for opportunities to make logic more functional:
 - Could this behavior be tested without a database, file system, or UI?
 - Are errors returned as values at the right abstraction level?
 - Is mutation justified by ownership, performance, or API constraints?
+- Is the functional version actually easier to read than the direct version?
 
 The aim is steady pressure toward clear, deterministic code. Keep the side effects we need, but make the pure center of the system as large and easy to trust as we reasonably can.

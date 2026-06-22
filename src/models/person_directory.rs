@@ -43,23 +43,26 @@ impl PersonDirectory {
     }
 
     pub fn assign_to_grave(&mut self, person_id: PersonId, grave_id: GraveId) {
-        if let Some(person) = self.person_mut(person_id) {
-            person.assign_to_grave(grave_id);
-        }
+        self.update_person(person_id, |person| person.assigned_to_grave(grave_id));
     }
 
     pub fn unassign_from_grave(&mut self, person_id: PersonId) {
-        if let Some(person) = self.person_mut(person_id) {
-            person.unassign_from_grave();
-        }
+        self.update_person(person_id, Person::unassigned_from_grave);
     }
 
     pub fn unassign_all_from_grave(&mut self, grave_id: GraveId) {
-        for person in &mut self.people {
-            if person.grave_id() == Some(grave_id) {
-                person.unassign_from_grave();
-            }
-        }
+        self.people = self
+            .people
+            .iter()
+            .cloned()
+            .map(|person| {
+                if person.grave_id() == Some(grave_id) {
+                    person.unassigned_from_grave()
+                } else {
+                    person
+                }
+            })
+            .collect();
     }
 
     pub fn people_in_grave(&self, grave_id: GraveId) -> Vec<&Person> {
@@ -86,8 +89,17 @@ impl PersonDirectory {
         self.people.iter().find(|person| person.id() == id)
     }
 
-    pub fn person_mut(&mut self, id: PersonId) -> Option<&mut Person> {
-        self.people.iter_mut().find(|person| person.id() == id)
+    pub fn update_person(&mut self, id: PersonId, update: impl FnOnce(Person) -> Person) -> bool {
+        let Some(index) = self.index_of(id) else {
+            return false;
+        };
+
+        self.people[index] = update(self.people[index].clone());
+        true
+    }
+
+    fn index_of(&self, id: PersonId) -> Option<usize> {
+        self.people.iter().position(|person| person.id() == id)
     }
 
     fn next_id(&mut self) -> PersonId {
@@ -165,14 +177,10 @@ mod tests {
         let ada = create_person(&mut directory, None);
         let grace = create_person(&mut directory, None);
 
-        directory
-            .person_mut(ada)
-            .expect("person should exist")
-            .set_first_name("Ada".to_owned());
-        directory
-            .person_mut(grace)
-            .expect("person should exist")
-            .set_last_name("Hopper".to_owned());
+        assert!(directory.update_person(ada, |person| person.with_first_name("Ada".to_owned())));
+        assert!(
+            directory.update_person(grace, |person| person.with_last_name("Hopper".to_owned()))
+        );
 
         let people = directory.search("  hop  ");
 

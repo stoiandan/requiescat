@@ -55,6 +55,7 @@ date-of-decease-example = Date of decease, e.g. 30-04-1996
 date-of-birth = Date of birth
 date-of-decease = Date of decease
 grave = Grave { $grave }
+grave-gps = GPS, e.g. 51° 30′ 26.64″ N, 0° 7′ 40.08″ W
 grave-canvas = grave { $grave }
 no-persons-associated = No persons associated yet
 persons = Persons

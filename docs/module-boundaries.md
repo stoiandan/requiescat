@@ -122,6 +122,7 @@ If the answer is unclear, prefer a smaller API and expand it only when a real ca
 - Do not make callers perform setup steps in the correct order if the module can do it for them.
 - Prefer one clear operation over several public helper calls that must be chained correctly.
 - Prefer functional programming and pure functions when it is feasible. See [Functional Programming Know-How](functional-programming.md) for the fuller project guidance.
+- Let ease of reading and simplicity prevail when they conflict with a preferred pattern.
 - Isolate unavoidable side effects, such as persistence, file system access, logging, clocks, and UI coordination, at module boundaries.
 - Use traits when the boundary is useful for testing, alternate implementations, or clearer ownership.
 - Avoid adding abstractions just to add layers; add them when they protect a real boundary.

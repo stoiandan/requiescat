@@ -11,7 +11,7 @@ use iced::widget::{
 use iced::{Background, Border, Color, Element, Length, Point, Renderer, Shadow, Theme, Vector};
 
 use crate::localization::{Language, Localizer, MessageId};
-use crate::models::{Cemetery, GraveId, GraveRectangle, Person, PersonDate, PersonId};
+use crate::models::{Cemetery, GraveGps, GraveId, GraveRectangle, Person, PersonDate, PersonId};
 
 #[derive(Default)]
 pub struct MapEditor {
@@ -23,6 +23,7 @@ pub struct MapEditor {
     person_search: String,
     new_person: NewPersonDraft,
     person_edits: HashMap<PersonId, PersonEditDraft>,
+    grave_gps_edits: HashMap<GraveId, String>,
     render_revision: u64,
 }
 
@@ -41,6 +42,7 @@ pub enum Message {
     PanCamera(iced::Vector),
     ZoomCamera { cursor: Point, amount: f32 },
     SelectGrave(Option<GraveId>),
+    UpdateGraveGps(GraveId, String),
     SelectPerson(PersonId),
     PersonSearchChanged(String),
     AssignPersonToSelectedGrave(PersonId),
@@ -138,6 +140,7 @@ impl MapEditor {
                 }
                 UpdateOutcome::Unchanged
             }
+            Message::UpdateGraveGps(id, value) => self.update_grave_gps(id, value),
             Message::SelectPerson(id) => {
                 self.selected_person = Some(id);
                 let previous_grave = self.selected_grave;
@@ -358,6 +361,20 @@ impl MapEditor {
         ]
         .spacing(8);
 
+        if let Some(grave) = self.cemetery.grave(grave_id) {
+            let gps = self
+                .grave_gps_edits
+                .get(&grave_id)
+                .cloned()
+                .unwrap_or_else(|| grave.gps_text());
+
+            content = content.push(
+                text_input(&localizer.text(MessageId::GraveGps), &gps)
+                    .on_input(move |value| Message::UpdateGraveGps(grave_id, value))
+                    .padding(8),
+            );
+        }
+
         let people = self.cemetery.people_in_grave(grave_id);
 
         if people.is_empty() {
@@ -538,13 +555,7 @@ impl MapEditor {
             return UpdateOutcome::Unchanged;
         }
 
-        let Some(person) = self.cemetery.person_mut(id) else {
-            return UpdateOutcome::Unchanged;
-        };
-
-        person.set_first_name(value);
-        self.invalidate_map();
-        UpdateOutcome::Changed
+        self.update_person(id, |person| person.with_first_name(value))
     }
 
     fn update_person_last_name(&mut self, id: PersonId, value: String) -> UpdateOutcome {
@@ -553,13 +564,7 @@ impl MapEditor {
             return UpdateOutcome::Unchanged;
         }
 
-        let Some(person) = self.cemetery.person_mut(id) else {
-            return UpdateOutcome::Unchanged;
-        };
-
-        person.set_last_name(value);
-        self.invalidate_map();
-        UpdateOutcome::Changed
+        self.update_person(id, |person| person.with_last_name(value))
     }
 
     fn update_person_date_of_birth(&mut self, id: PersonId, value: String) -> UpdateOutcome {
@@ -568,13 +573,7 @@ impl MapEditor {
             return UpdateOutcome::Unchanged;
         };
 
-        let Some(person) = self.cemetery.person_mut(id) else {
-            return UpdateOutcome::Unchanged;
-        };
-
-        person.set_date_of_birth(date);
-        self.invalidate_map();
-        UpdateOutcome::Changed
+        self.update_person(id, |person| person.with_date_of_birth(date))
     }
 
     fn update_person_date_of_decease(&mut self, id: PersonId, value: String) -> UpdateOutcome {
@@ -587,13 +586,40 @@ impl MapEditor {
             return UpdateOutcome::Unchanged;
         };
 
-        let Some(person) = self.cemetery.person_mut(id) else {
+        self.update_person(id, |person| person.with_date_of_decease(date))
+    }
+
+    fn update_person(
+        &mut self,
+        id: PersonId,
+        update: impl FnOnce(Person) -> Person,
+    ) -> UpdateOutcome {
+        if self.cemetery.update_person(id, update) {
+            self.invalidate_map();
+            UpdateOutcome::Changed
+        } else {
+            UpdateOutcome::Unchanged
+        }
+    }
+
+    fn update_grave_gps(&mut self, id: GraveId, value: String) -> UpdateOutcome {
+        self.grave_gps_edits.insert(id, value.clone());
+
+        let gps = if value.trim().is_empty() {
+            None
+        } else if let Ok(gps) = GraveGps::parse(&value) {
+            Some(gps)
+        } else {
             return UpdateOutcome::Unchanged;
         };
 
-        person.set_date_of_decease(date);
-        self.invalidate_map();
-        UpdateOutcome::Changed
+        if self.cemetery.update_grave_gps(id, gps) {
+            self.grave_gps_edits.remove(&id);
+            self.invalidate_map();
+            UpdateOutcome::Changed
+        } else {
+            UpdateOutcome::Unchanged
+        }
     }
 
     pub(super) fn camera(&self) -> Camera {
@@ -888,6 +914,73 @@ mod tests {
         editor.update(Message::CreateGrave(rectangle_at(0.0, 0.0)));
 
         assert_eq!(editor.cemetery.graves()[0].color(), color);
+    }
+
+    #[test]
+    fn grave_gps_edit_preserves_intermediate_text_until_valid() {
+        let mut editor = MapEditor::default();
+        let grave_id = editor
+            .cemetery
+            .add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+
+        assert_eq!(
+            editor.update(Message::UpdateGraveGps(grave_id, "51° 30′".to_owned())),
+            UpdateOutcome::Unchanged
+        );
+        assert_eq!(
+            editor.grave_gps_edits.get(&grave_id).map(String::as_str),
+            Some("51° 30′")
+        );
+        assert_eq!(
+            editor
+                .cemetery
+                .grave(grave_id)
+                .and_then(|grave| grave.gps()),
+            None
+        );
+
+        assert_eq!(
+            editor.update(Message::UpdateGraveGps(
+                grave_id,
+                "51° 30′ 26.64″ N, 0° 7′ 40.08″ W".to_owned()
+            )),
+            UpdateOutcome::Changed
+        );
+
+        assert!(!editor.grave_gps_edits.contains_key(&grave_id));
+        assert_eq!(
+            editor
+                .cemetery
+                .grave(grave_id)
+                .and_then(|grave| grave.gps())
+                .map(|gps| gps.to_string()),
+            Some("51° 30′ 26.64″ N, 0° 7′ 40.08″ W".to_owned())
+        );
+    }
+
+    #[test]
+    fn empty_grave_gps_clears_saved_coordinates() {
+        let mut editor = MapEditor::default();
+        let grave_id = editor
+            .cemetery
+            .add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        editor.update(Message::UpdateGraveGps(
+            grave_id,
+            "51° 30′ 26.64″ N, 0° 7′ 40.08″ W".to_owned(),
+        ));
+
+        assert_eq!(
+            editor.update(Message::UpdateGraveGps(grave_id, " ".to_owned())),
+            UpdateOutcome::Changed
+        );
+
+        assert_eq!(
+            editor
+                .cemetery
+                .grave(grave_id)
+                .and_then(|grave| grave.gps()),
+            None
+        );
     }
 
     #[test]

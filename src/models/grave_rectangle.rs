@@ -40,9 +40,15 @@ impl GraveRectangle {
             && point.y <= self.top_left.y + self.size.height
     }
 
+    pub fn translated(self, delta: Vector) -> Self {
+        Self {
+            top_left: Point::new(self.top_left.x + delta.x, self.top_left.y + delta.y),
+            ..self
+        }
+    }
+
     pub fn translate(&mut self, delta: Vector) {
-        self.top_left.x += delta.x;
-        self.top_left.y += delta.y;
+        *self = self.translated(delta);
     }
 }
 
@@ -87,5 +93,17 @@ mod tests {
 
         assert_eq!(rectangle.top_left(), Point::new(5.0, 27.5));
         assert_eq!(rectangle.size(), Size::new(30.0, 40.0));
+    }
+
+    #[test]
+    fn translated_returns_a_moved_rectangle_without_changing_the_original() {
+        let rectangle =
+            GraveRectangle::from_top_left_size(Point::new(10.0, 20.0), Size::new(30.0, 40.0));
+
+        let translated = rectangle.translated(Vector::new(-5.0, 7.5));
+
+        assert_eq!(rectangle.top_left(), Point::new(10.0, 20.0));
+        assert_eq!(translated.top_left(), Point::new(5.0, 27.5));
+        assert_eq!(translated.size(), Size::new(30.0, 40.0));
     }
 }

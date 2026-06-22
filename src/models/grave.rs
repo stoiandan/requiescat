@@ -1,12 +1,13 @@
 use iced::{Point, Vector};
 
-use super::{GraveId, GraveRectangle};
+use super::{GraveGps, GraveId, GraveRectangle};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Grave {
     id: GraveId,
     rectangle: GraveRectangle,
     color: GraveColor,
+    gps: Option<GraveGps>,
 }
 
 impl Grave {
@@ -15,6 +16,21 @@ impl Grave {
             id,
             rectangle,
             color,
+            gps: None,
+        }
+    }
+
+    pub fn from_parts(
+        id: GraveId,
+        rectangle: GraveRectangle,
+        color: GraveColor,
+        gps: Option<GraveGps>,
+    ) -> Self {
+        Self {
+            id,
+            rectangle,
+            color,
+            gps,
         }
     }
 
@@ -30,12 +46,31 @@ impl Grave {
         self.color
     }
 
+    pub fn gps(&self) -> Option<GraveGps> {
+        self.gps
+    }
+
+    pub fn gps_text(&self) -> String {
+        self.gps.map(|gps| gps.to_string()).unwrap_or_default()
+    }
+
+    pub fn with_gps(self, gps: Option<GraveGps>) -> Self {
+        Self { gps, ..self }
+    }
+
     pub fn contains(&self, point: Point) -> bool {
         self.rectangle.contains(point)
     }
 
+    pub fn translated(self, delta: Vector) -> Self {
+        Self {
+            rectangle: self.rectangle.translated(delta),
+            ..self
+        }
+    }
+
     pub fn translate(&mut self, delta: Vector) {
-        self.rectangle.translate(delta);
+        *self = self.translated(delta);
     }
 }
 

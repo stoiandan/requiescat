@@ -1,6 +1,6 @@
 use iced::Vector;
 
-use super::{Grave, GraveColor, GraveId, GraveRectangle};
+use super::{Grave, GraveColor, GraveGps, GraveId, GraveRectangle};
 
 #[derive(Debug, Clone, Default)]
 pub struct CemeteryMap {
@@ -39,9 +39,11 @@ impl CemeteryMap {
     }
 
     pub fn move_grave(&mut self, id: GraveId, delta: Vector) {
-        if let Some(grave) = self.grave_mut(id) {
-            grave.translate(delta);
-        }
+        self.update_grave(id, |grave| grave.translated(delta));
+    }
+
+    pub fn update_grave_gps(&mut self, id: GraveId, gps: Option<GraveGps>) -> bool {
+        self.update_grave(id, |grave| grave.with_gps(gps))
     }
 
     pub fn grave_at(&self, point: iced::Point) -> Option<GraveId> {
@@ -60,8 +62,13 @@ impl CemeteryMap {
         self.graves.iter().find(|grave| grave.id() == id)
     }
 
-    fn grave_mut(&mut self, id: GraveId) -> Option<&mut Grave> {
-        self.graves.iter_mut().find(|grave| grave.id() == id)
+    fn update_grave(&mut self, id: GraveId, update: impl FnOnce(Grave) -> Grave) -> bool {
+        let Some(index) = self.index_of(id) else {
+            return false;
+        };
+
+        self.graves[index] = update(self.graves[index]);
+        true
     }
 
     fn index_of(&self, id: GraveId) -> Option<usize> {
