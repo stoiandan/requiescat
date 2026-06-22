@@ -202,7 +202,7 @@ impl MapEditor {
             map_row = map_row.push(self.side_panel(localizer, grave_id));
         }
 
-        let mut footer = row![self.toolbar.view().map(Message::ToolBarAction)]
+        let mut footer = row![self.toolbar.view(localizer).map(Message::ToolBarAction)]
             .spacing(8)
             .padding([8, 12]);
 

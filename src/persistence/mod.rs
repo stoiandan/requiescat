@@ -123,6 +123,24 @@ impl CemeteryLibrary {
         fs::copy(source, destination)?;
         Ok(())
     }
+
+    pub fn delete(&self, path: &Path) -> Result<(), PersistenceError> {
+        let Some(file_name) = path.file_name() else {
+            return Err(PersistenceError::InvalidData(
+                "Choose a cemetery from the library.".to_owned(),
+            ));
+        };
+
+        let library_path = self.directory.join(file_name);
+        if library_path != path || !is_sqlite_file(&library_path) {
+            return Err(PersistenceError::InvalidData(
+                "Choose a cemetery from the library.".to_owned(),
+            ));
+        }
+
+        fs::remove_file(library_path)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -739,6 +757,23 @@ mod tests {
             1
         );
         drop(connection);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn library_deletes_a_cemetery_file() {
+        let directory = std::env::temp_dir().join(format!(
+            "requiescat-library-delete-test-{}",
+            std::process::id()
+        ));
+        let library = CemeteryLibrary::new(directory.clone()).unwrap();
+        let cemetery = library.create("Central").unwrap();
+
+        library.delete(&cemetery).unwrap();
+
+        assert!(!cemetery.exists());
+        assert!(library.cemeteries().unwrap().is_empty());
 
         fs::remove_dir_all(directory).unwrap();
     }

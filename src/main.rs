@@ -95,6 +95,8 @@ enum AppStatus {
     CouldNotLoadCemetery(String),
     CouldNotImportCemetery(String),
     CouldNotCreateCemetery(String),
+    CemeteryDeleted,
+    CouldNotDeleteCemetery(String),
     ExportSaveFailed,
     CemeteryExported,
     CouldNotExportCemetery(String),
@@ -117,6 +119,10 @@ impl AppStatus {
             }
             Self::CouldNotCreateCemetery(error) => {
                 localizer.value(MessageId::CouldNotCreateCemetery, "error", error.as_str())
+            }
+            Self::CemeteryDeleted => localizer.text(MessageId::CemeteryDeleted),
+            Self::CouldNotDeleteCemetery(error) => {
+                localizer.value(MessageId::CouldNotDeleteCemetery, "error", error.as_str())
             }
             Self::ExportSaveFailed => localizer.text(MessageId::ExportSaveFailed),
             Self::CemeteryExported => localizer.text(MessageId::CemeteryExported),
@@ -153,6 +159,7 @@ struct Requiescat {
     show_cemeteries: bool,
     show_create_cemetery: bool,
     new_cemetery_name: String,
+    pending_delete_cemetery: Option<PathBuf>,
     status: Option<AppStatus>,
     save_state: SaveState,
     save_revision: u64,
@@ -204,6 +211,7 @@ impl Requiescat {
                 show_cemeteries: false,
                 show_create_cemetery: false,
                 new_cemetery_name: String::new(),
+                pending_delete_cemetery: None,
                 status,
                 save_state: SaveState::Clean,
                 save_revision: 0,
@@ -381,6 +389,11 @@ impl Requiescat {
                 .status
                 .as_ref()
                 .map(|status| status.localized(&self.localizer));
+            let pending_delete = self.pending_delete_cemetery.as_deref().and_then(|path| {
+                self.cemeteries
+                    .iter()
+                    .find(|cemetery| cemetery.path() == path)
+            });
 
             match self.main_screen {
                 MainScreen::StartMenu => start_menu_view(
@@ -391,6 +404,7 @@ impl Requiescat {
                         show_cemeteries: self.show_cemeteries,
                         show_create_cemetery: self.show_create_cemetery,
                         new_cemetery_name: &self.new_cemetery_name,
+                        pending_delete,
                         status,
                     },
                 )
@@ -637,6 +651,7 @@ impl Requiescat {
                 self.show_cemeteries = false;
                 self.show_create_cemetery = false;
                 self.new_cemetery_name.clear();
+                self.pending_delete_cemetery = None;
                 self.status = None;
             }
             StartMenuMessage::OpenCemetery(path) => {
@@ -659,6 +674,17 @@ impl Requiescat {
                     return self.create_cemetery();
                 }
             }
+            StartMenuMessage::RequestDeleteCemetery(path) => {
+                self.pending_delete_cemetery = Some(path);
+                self.status = None;
+            }
+            StartMenuMessage::CancelDeleteCemetery => {
+                self.pending_delete_cemetery = None;
+            }
+            StartMenuMessage::ConfirmDeleteCemetery(path) => {
+                self.pending_delete_cemetery = None;
+                self.delete_cemetery(path);
+            }
             StartMenuMessage::ImportCemetery => {
                 let filter = self.localizer.text(MessageId::FileFilterSqliteCemetery);
                 return Task::perform(
@@ -678,6 +704,24 @@ impl Requiescat {
         }
 
         Task::none()
+    }
+
+    fn delete_cemetery(&mut self, path: PathBuf) {
+        let Some(library) = &self.library else {
+            self.status = Some(AppStatus::LibraryUnavailable);
+            return;
+        };
+
+        match library.delete(&path) {
+            Ok(()) => {
+                self.selected_cemetery = None;
+                self.refresh_cemeteries();
+                self.status = Some(AppStatus::CemeteryDeleted);
+            }
+            Err(error) => {
+                self.status = Some(AppStatus::CouldNotDeleteCemetery(error.to_string()));
+            }
+        }
     }
 
     fn load_selected_cemetery(&mut self) -> Task<Message> {

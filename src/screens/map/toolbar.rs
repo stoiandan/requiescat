@@ -1,6 +1,7 @@
-use iced::widget::{Space, button, column, container, row, text};
+use iced::widget::{Space, button, column, container, row, text, tooltip};
 use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
 
+use crate::localization::{Localizer, MessageId};
 use crate::models::GraveColor;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,43 +40,59 @@ impl Default for Toolbar {
 }
 
 impl Toolbar {
-    pub fn view(&self) -> Element<'_, ToolbarAction> {
+    pub fn view<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, ToolbarAction> {
         let tools = row![
             tool_button(
                 "ⓘ",
                 ToolbarAction::SelectTool(Tool::Select),
                 self.selected_tool == Tool::Select,
+                localizer.text(MessageId::ToolSelect),
             ),
             tool_button(
                 "🖌",
                 ToolbarAction::SelectTool(Tool::Draw),
                 self.selected_tool == Tool::Draw,
+                localizer.text(MessageId::ToolDraw),
             ),
             tool_button(
                 "▯",
                 ToolbarAction::SelectTool(Tool::StampGrave),
                 self.selected_tool == Tool::StampGrave,
+                localizer.text(MessageId::ToolStampGrave),
             ),
             tool_button(
                 "✋",
                 ToolbarAction::SelectTool(Tool::Grab),
                 self.selected_tool == Tool::Grab,
+                localizer.text(MessageId::ToolGrab),
             ),
-            tool_button("#", ToolbarAction::ToggleGrid, self.show_grid),
+            tool_button(
+                "#",
+                ToolbarAction::ToggleGrid,
+                self.show_grid,
+                localizer.text(MessageId::ToolGrid),
+            ),
             tool_button(
                 "❌",
                 ToolbarAction::SelectTool(Tool::Erase),
-                self.selected_tool == Tool::Erase
+                self.selected_tool == Tool::Erase,
+                localizer.text(MessageId::ToolErase),
             ),
-            color_picker_button(self.selected_grave_color)
+            color_picker_button(
+                self.selected_grave_color,
+                localizer.text(MessageId::ToolGraveColor),
+            )
         ]
         .spacing(8);
 
         let content = if self.show_color_picker {
             column![
-                container(color_palette(self.selected_grave_color))
-                    .width(Length::Fill)
-                    .align_x(iced::Alignment::End),
+                container(color_palette(
+                    self.selected_grave_color,
+                    localizer.text(MessageId::ToolColorSwatch),
+                ))
+                .width(Length::Fill)
+                .align_x(iced::Alignment::End),
                 tools
             ]
             .spacing(8)
@@ -142,58 +159,62 @@ fn tool_button(
     icon: &'static str,
     action: ToolbarAction,
     selected: bool,
-) -> button::Button<'static, ToolbarAction> {
-    button(
-        text(icon)
-            .size(22)
-            .align_x(iced::Alignment::Center)
-            .align_y(iced::Alignment::Center),
-    )
-    .width(44)
-    .height(44)
-    .padding(0)
-    .on_press(action)
-    .style(move |_, status| {
-        let pressed = status == button::Status::Pressed;
-        let hovered = status == button::Status::Hovered;
+    label: String,
+) -> Element<'static, ToolbarAction> {
+    tooltip_button(
+        button(
+            text(icon)
+                .size(22)
+                .align_x(iced::Alignment::Center)
+                .align_y(iced::Alignment::Center),
+        )
+        .width(44)
+        .height(44)
+        .padding(0)
+        .on_press(action)
+        .style(move |_, status| {
+            let pressed = status == button::Status::Pressed;
+            let hovered = status == button::Status::Hovered;
 
-        button::Style {
-            background: Some(Background::Color(if selected || pressed {
-                Color::from_rgb8(24, 117, 120)
-            } else if hovered {
-                Color::from_rgb8(52, 151, 153)
-            } else {
-                Color::from_rgb8(38, 126, 129)
-            })),
-            text_color: Color::WHITE,
-            border: Border {
-                color: if selected {
-                    Color::from_rgb8(151, 255, 244)
+            button::Style {
+                background: Some(Background::Color(if selected || pressed {
+                    Color::from_rgb8(24, 117, 120)
+                } else if hovered {
+                    Color::from_rgb8(52, 151, 153)
                 } else {
-                    Color::from_rgb8(17, 78, 81)
+                    Color::from_rgb8(38, 126, 129)
+                })),
+                text_color: Color::WHITE,
+                border: Border {
+                    color: if selected {
+                        Color::from_rgb8(151, 255, 244)
+                    } else {
+                        Color::from_rgb8(17, 78, 81)
+                    },
+                    width: if selected { 2.0 } else { 1.0 },
+                    radius: 4.0.into(),
                 },
-                width: if selected { 2.0 } else { 1.0 },
-                radius: 4.0.into(),
-            },
-            shadow: Shadow {
-                color: Color::from_rgba8(0, 0, 0, 0.45),
-                offset: if pressed {
-                    Vector::new(0.0, 1.0)
-                } else {
-                    Vector::new(0.0, 3.0)
+                shadow: Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.45),
+                    offset: if pressed {
+                        Vector::new(0.0, 1.0)
+                    } else {
+                        Vector::new(0.0, 3.0)
+                    },
+                    blur_radius: if pressed { 1.0 } else { 2.0 },
                 },
-                blur_radius: if pressed { 1.0 } else { 2.0 },
-            },
-            ..Default::default()
-        }
-    })
+                ..Default::default()
+            }
+        }),
+        label,
+    )
 }
 
-fn color_palette(selected: GraveColor) -> Element<'static, ToolbarAction> {
+fn color_palette(selected: GraveColor, label: String) -> Element<'static, ToolbarAction> {
     let mut colors = row![].spacing(6);
 
     for color in GraveColor::PALETTE {
-        colors = colors.push(color_swatch(color, selected == color));
+        colors = colors.push(color_swatch(color, selected == color, label.clone()));
     }
 
     container(colors)
@@ -215,22 +236,61 @@ fn color_palette(selected: GraveColor) -> Element<'static, ToolbarAction> {
         .into()
 }
 
-fn color_picker_button(color: GraveColor) -> button::Button<'static, ToolbarAction> {
-    button(Space::new().width(Length::Fill).height(Length::Fill))
-        .width(44)
-        .height(44)
-        .padding(0)
-        .on_press(ToolbarAction::ToggleColorPicker)
-        .style(move |_, status| color_button_style(status, color, false))
+fn color_picker_button(color: GraveColor, label: String) -> Element<'static, ToolbarAction> {
+    tooltip_button(
+        button(Space::new().width(Length::Fill).height(Length::Fill))
+            .width(44)
+            .height(44)
+            .padding(0)
+            .on_press(ToolbarAction::ToggleColorPicker)
+            .style(move |_, status| color_button_style(status, color, false)),
+        label,
+    )
 }
 
-fn color_swatch(color: GraveColor, selected: bool) -> button::Button<'static, ToolbarAction> {
-    button(text(""))
-        .width(34)
-        .height(34)
-        .padding(0)
-        .on_press(ToolbarAction::SelectGraveColor(color))
-        .style(move |_, status| color_button_style(status, color, selected))
+fn color_swatch(
+    color: GraveColor,
+    selected: bool,
+    label: String,
+) -> Element<'static, ToolbarAction> {
+    tooltip_button(
+        button(text(""))
+            .width(34)
+            .height(34)
+            .padding(0)
+            .on_press(ToolbarAction::SelectGraveColor(color))
+            .style(move |_, status| color_button_style(status, color, selected)),
+        label,
+    )
+}
+
+fn tooltip_button(
+    button: button::Button<'static, ToolbarAction>,
+    label: String,
+) -> Element<'static, ToolbarAction> {
+    tooltip(
+        button,
+        container(text(label).size(12))
+            .padding([6, 8])
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(9, 31, 35))),
+                text_color: Some(Color::WHITE),
+                border: Border {
+                    color: Color::from_rgb8(72, 164, 166),
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                shadow: Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.35),
+                    offset: Vector::new(0.0, 2.0),
+                    blur_radius: 4.0,
+                },
+                ..Default::default()
+            }),
+        tooltip::Position::Top,
+    )
+    .gap(8)
+    .into()
 }
 
 fn color_button_style(status: button::Status, color: GraveColor, selected: bool) -> button::Style {

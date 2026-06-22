@@ -5,6 +5,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use crate::localization::{Localizer, MessageId};
 use crate::persistence::CemeteryFile;
+use crate::screens::ConfirmationDialog;
 
 const BACKGROUND: Color = Color::from_rgb(0.035, 0.105, 0.11);
 const PANEL: Color = Color::from_rgb(0.055, 0.17, 0.18);
@@ -25,6 +26,9 @@ pub enum Message {
     SubmitCreateCemetery,
     ImportCemetery,
     ExportSelected,
+    RequestDeleteCemetery(PathBuf),
+    CancelDeleteCemetery,
+    ConfirmDeleteCemetery(PathBuf),
 }
 
 pub struct ViewState<'a> {
@@ -33,18 +37,27 @@ pub struct ViewState<'a> {
     pub show_cemeteries: bool,
     pub show_create_cemetery: bool,
     pub new_cemetery_name: &'a str,
+    pub pending_delete: Option<&'a CemeteryFile>,
     pub status: Option<String>,
 }
 
 pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, Message> {
-    if state.show_create_cemetery {
-        return create_cemetery_form(localizer, state.new_cemetery_name, state.status);
+    let content = if state.show_create_cemetery {
+        create_cemetery_form(localizer, state.new_cemetery_name, state.status)
+    } else if state.show_cemeteries {
+        cemetery_list(localizer, state.cemeteries, state.selected, state.status)
+    } else {
+        landing_page(localizer, &state)
+    };
+
+    if let Some(cemetery) = state.pending_delete {
+        return delete_confirmation(localizer, cemetery).overlay(content);
     }
 
-    if state.show_cemeteries {
-        return cemetery_list(localizer, state.cemeteries, state.selected, state.status);
-    }
+    content
+}
 
+fn landing_page<'a>(localizer: &'a Localizer, state: &ViewState<'a>) -> Element<'a, Message> {
     let library_summary = match state.cemeteries.len() {
         0 => localizer.text(MessageId::LibraryEmpty),
         count => localizer.count(MessageId::LibraryCount, count),
@@ -93,17 +106,7 @@ pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, M
         ..Default::default()
     });
 
-    let (heading, supporting_text) = if state.cemeteries.is_empty() {
-        (
-            localizer.text(MessageId::SetupLibrary),
-            localizer.text(MessageId::SetupLibraryDescription),
-        )
-    } else {
-        (
-            localizer.text(MessageId::WelcomeBack),
-            localizer.text(MessageId::WelcomeBackDescription),
-        )
-    };
+    let heading = localizer.text(MessageId::SetupLibrary);
 
     let mut action_buttons = column![].spacing(10);
 
@@ -122,7 +125,7 @@ pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, M
     } else {
         action_buttons = action_buttons
             .push(menu_button(
-                localizer.text(MessageId::OpenCemetery),
+                localizer.text(MessageId::Cemeteries),
                 Message::ShowCemeteries,
                 true,
             ))
@@ -151,13 +154,9 @@ pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, M
 
     let actions = container(
         column![
-            column![
-                text(heading).size(24).color(TEXT_PRIMARY),
-                text(supporting_text).size(13).color(TEXT_MUTED)
-            ]
-            .spacing(6),
+            text(heading).size(24).color(TEXT_PRIMARY),
             action_buttons,
-            status_view(state.status)
+            status_view(state.status.clone())
         ]
         .spacing(24),
     )
@@ -172,6 +171,28 @@ pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, M
         .style(|_| panel_style(16.0));
 
     screen(panel)
+}
+
+fn delete_confirmation<'a>(
+    localizer: &'a Localizer,
+    cemetery: &'a CemeteryFile,
+) -> ConfirmationDialog<Message> {
+    ConfirmationDialog::new(
+        localizer.value(
+            MessageId::ConfirmDeleteCemeteryTitle,
+            "name",
+            cemetery.name(),
+        ),
+        localizer.value(
+            MessageId::ConfirmDeleteCemeteryDescription,
+            "name",
+            cemetery.name(),
+        ),
+        localizer.text(MessageId::Cancel),
+        localizer.text(MessageId::Delete),
+        Message::CancelDeleteCemetery,
+        Message::ConfirmDeleteCemetery(cemetery.path().to_owned()),
+    )
 }
 
 fn create_cemetery_form<'a>(
@@ -259,14 +280,7 @@ fn cemetery_list<'a>(
                 column![
                     text(localizer.text(MessageId::NoCemeteries))
                         .size(18)
-                        .color(TEXT_PRIMARY),
-                    text(localizer.text(MessageId::NoCemeteriesDescription))
-                        .size(13)
-                        .color(TEXT_MUTED),
-                    button(text(localizer.text(MessageId::ImportCemetery)))
-                        .on_press(Message::ImportCemetery)
-                        .padding([10, 16])
-                        .style(primary_button_style)
+                        .color(TEXT_PRIMARY)
                 ]
                 .spacing(12)
                 .align_x(Alignment::Center),
@@ -305,7 +319,11 @@ fn cemetery_list<'a>(
                         button(text(localizer.text(MessageId::Open)))
                             .on_press(Message::OpenCemetery(cemetery.path().to_owned()))
                             .padding([8, 14])
-                            .style(primary_button_style)
+                            .style(primary_button_style),
+                        button(text(localizer.text(MessageId::Delete)))
+                            .on_press(Message::RequestDeleteCemetery(cemetery.path().to_owned()))
+                            .padding([8, 14])
+                            .style(danger_outline_button_style)
                     ]
                     .align_y(Alignment::Center)
                     .spacing(12),
@@ -478,6 +496,24 @@ fn quiet_button_style(_: &Theme, status: button::Status) -> button::Style {
         text_color: TEXT_PRIMARY,
         border: Border {
             color: BORDER_COLOR,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn danger_outline_button_style(_: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(Background::Color(match status {
+            button::Status::Hovered => Color::from_rgb(0.24, 0.10, 0.10),
+            button::Status::Pressed => Color::from_rgb(0.34, 0.11, 0.10),
+            button::Status::Disabled => Color::from_rgb(0.08, 0.06, 0.06),
+            button::Status::Active => Color::from_rgb(0.14, 0.07, 0.07),
+        })),
+        text_color: Color::from_rgb(1.0, 0.76, 0.73),
+        border: Border {
+            color: Color::from_rgb(0.70, 0.25, 0.23),
             width: 1.0,
             radius: 10.0.into(),
         },
