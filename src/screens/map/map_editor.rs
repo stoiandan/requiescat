@@ -712,6 +712,10 @@ impl MapEditor {
         true
     }
 
+    pub fn can_duplicate_last_grave(&self) -> bool {
+        self.last_created_grave().is_some()
+    }
+
     fn center_camera_on_grave(&mut self, grave_id: GraveId) {
         if let Some(grave) = self.cemetery.grave(grave_id) {
             self.camera.center_on(grave.rectangle().center());

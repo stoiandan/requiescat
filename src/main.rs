@@ -684,21 +684,28 @@ impl Requiescat {
     }
 
     fn app_menu_dropdown<'a>(&'a self, menu: AppMenu) -> Element<'a, Message> {
-        const FILE_ACTIONS: &[(MessageId, Message)] = &[
-            (MessageId::AppMenuNewPerson, Message::NewPerson),
-            (MessageId::AppMenuExportDb, Message::ExportActiveCemetery),
+        const FILE_ACTIONS: &[(MessageId, Message, bool)] = &[
+            (MessageId::AppMenuNewPerson, Message::NewPerson, true),
+            (
+                MessageId::AppMenuExportDb,
+                Message::ExportActiveCemetery,
+                true,
+            ),
             (
                 MessageId::AppMenuExportPdf,
                 Message::ExportActiveCemeteryPdf,
+                true,
             ),
         ];
-        const EDIT_ACTIONS: &[(MessageId, Message)] = &[(
+        let edit_actions: &[(MessageId, Message, bool)] = &[(
             MessageId::AppMenuDuplicateLastGrave,
             Message::DuplicateLastGrave,
+            self.editor.can_duplicate_last_grave(),
         )];
-        const VIEW_ACTIONS: &[(MessageId, Message)] = &[(
+        const VIEW_ACTIONS: &[(MessageId, Message, bool)] = &[(
             MessageId::AppMenuPersonDirectory,
             Message::OpenPersonDirectory,
+            true,
         )];
 
         let mut items = column![]
@@ -708,18 +715,22 @@ impl Requiescat {
 
         let actions = match menu {
             AppMenu::File => FILE_ACTIONS,
-            AppMenu::Edit => EDIT_ACTIONS,
+            AppMenu::Edit => edit_actions,
             AppMenu::View => VIEW_ACTIONS,
         };
 
-        for (label, message) in actions {
-            items = items.push(
-                button(text(self.localizer.text(*label)).size(13))
-                    .width(Length::Fill)
-                    .padding([6, 12])
-                    .style(app_menu_item_button)
-                    .on_press(message.clone()),
-            );
+        for (label, message, enabled) in actions.iter().cloned() {
+            let item = button(text(self.localizer.text(label)).size(13))
+                .width(Length::Fill)
+                .padding([6, 12])
+                .style(app_menu_item_button);
+            let item = if enabled {
+                item.on_press(message)
+            } else {
+                item
+            };
+
+            items = items.push(item);
         }
 
         container(items)
@@ -1158,16 +1169,21 @@ fn app_menu_title_button(_: &Theme, status: button::Status, active: bool) -> but
 fn app_menu_item_button(_: &Theme, status: button::Status) -> button::Style {
     let pressed = status == button::Status::Pressed;
     let hovered = status == button::Status::Hovered;
+    let disabled = status == button::Status::Disabled;
 
     button::Style {
         background: if pressed {
             Some(Background::Color(Color::from_rgb8(35, 112, 116)))
-        } else if hovered {
+        } else if hovered && !disabled {
             Some(Background::Color(Color::from_rgb8(29, 91, 96)))
         } else {
             None
         },
-        text_color: Color::WHITE,
+        text_color: if disabled {
+            Color::from_rgb8(107, 146, 148)
+        } else {
+            Color::WHITE
+        },
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
