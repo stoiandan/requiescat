@@ -77,6 +77,8 @@ tool-grid = Arată/ascunde axele
 tool-erase = Șterge mormântul sau delimitatorul
 tool-grave-color = Culoarea desenului
 tool-color-swatch = Alege culoarea
+tool-edit = Editare
+tool-duplicate-last-grave = Duplică ultimul mormânt
 
 file-filter-sqlite-cemetery = Cimitir SQLite
 file-filter-pdf = Document PDF

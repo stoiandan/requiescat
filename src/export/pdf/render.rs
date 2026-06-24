@@ -61,15 +61,17 @@ pub(super) fn map(
 
     for grave in cemetery.graves() {
         let pdf_rectangle = PdfRectangle::from_map(grave.rectangle(), &transform);
+        let corners =
+            PdfRectangle::corners_from_map(grave.rectangle(), grave.rotation_degrees(), &transform);
         let (red, green, blue) = rgb(grave.color());
 
         content.fill_color(red, green, blue);
-        pdf_rectangle.draw(content);
+        content.polygon(&corners);
         content.fill();
 
         content.stroke_color(0.95, 0.98, 0.98);
         content.line_width(1.25);
-        pdf_rectangle.draw(content);
+        content.polygon(&corners);
         content.stroke();
 
         render_grave_label(

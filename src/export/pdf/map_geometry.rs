@@ -1,6 +1,5 @@
 use crate::models::GraveRectangle;
 
-use super::content::PdfContent;
 use super::layout::MapTransform;
 
 #[derive(Debug, Clone, Copy)]
@@ -24,16 +23,24 @@ impl PdfRectangle {
         }
     }
 
-    pub(super) fn draw(self, content: &mut PdfContent) {
-        content.rectangle(self.x, self.y, self.width, self.height);
+    pub(super) fn corners_from_map(
+        rectangle: GraveRectangle,
+        rotation_degrees: f32,
+        transform: &MapTransform,
+    ) -> [iced::Point; 4] {
+        rectangle
+            .corners_rotated(rotation_degrees)
+            .map(|corner| transform.point(corner))
     }
 
-    pub(super) fn center_y(self) -> f32 {
-        self.y + self.height / 2.0
-    }
-
-    pub(super) fn right(self) -> f32 {
-        self.x + self.width
+    pub(super) fn point_from_map(
+        rectangle: GraveRectangle,
+        x: f32,
+        y: f32,
+        rotation_degrees: f32,
+        transform: &MapTransform,
+    ) -> iced::Point {
+        transform.point(rectangle.point_at_rotated(x, y, rotation_degrees))
     }
 
     pub(super) fn min_dimension(self) -> f32 {

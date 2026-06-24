@@ -11,7 +11,7 @@ use crate::models::{
 };
 
 const APPLICATION_ID: &str = "requiescat";
-const CURRENT_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 pub trait CemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError>;
@@ -188,7 +188,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         let graves = {
             let mut statement = connection.prepare(
                 "
-                SELECT id, x, y, width, height, color, gps
+                SELECT id, x, y, width, height, color, rotation_degrees, gps
                 FROM graves
                 ORDER BY id
                 ",
@@ -201,7 +201,8 @@ impl CemeteryRepository for SqliteCemeteryRepository {
                     width: row.get(3)?,
                     height: row.get(4)?,
                     color: row.get(5)?,
-                    gps: row.get(6)?,
+                    rotation_degrees: row.get(6)?,
+                    gps: row.get(7)?,
                 })
             })?;
 
@@ -214,7 +215,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         let delimiters = {
             let mut statement = connection.prepare(
                 "
-                SELECT id, x, y, width, height, color, type
+                SELECT id, x, y, width, height, color, type, rotation_degrees
                 FROM delimiters
                 ORDER BY id
                 ",
@@ -228,6 +229,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
                     height: row.get(4)?,
                     color: row.get(5)?,
                     delimiter_type: row.get(6)?,
+                    rotation_degrees: row.get(7)?,
                 })
             })?;
 
@@ -278,15 +280,22 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         {
             let mut statement = transaction.prepare(
                 "
-                INSERT INTO graves (id, x, y, width, height, color, gps)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                INSERT INTO graves (id, x, y, width, height, color, rotation_degrees, gps)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ",
             )?;
 
             for grave in cemetery.graves().iter().copied() {
                 let row = GraveRow::from(grave);
                 statement.execute(params![
-                    row.id, row.x, row.y, row.width, row.height, row.color, row.gps
+                    row.id,
+                    row.x,
+                    row.y,
+                    row.width,
+                    row.height,
+                    row.color,
+                    row.rotation_degrees,
+                    row.gps
                 ])?;
             }
         }
@@ -294,8 +303,8 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         {
             let mut statement = transaction.prepare(
                 "
-                INSERT INTO delimiters (id, x, y, width, height, color, type)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                INSERT INTO delimiters (id, x, y, width, height, color, type, rotation_degrees)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ",
             )?;
 
@@ -308,7 +317,8 @@ impl CemeteryRepository for SqliteCemeteryRepository {
                     row.width,
                     row.height,
                     row.color,
-                    row.delimiter_type
+                    row.delimiter_type,
+                    row.rotation_degrees
                 ])?;
             }
         }
@@ -362,6 +372,7 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
             width REAL NOT NULL,
             height REAL NOT NULL,
             color TEXT NOT NULL DEFAULT '#a61f28',
+            rotation_degrees REAL NOT NULL DEFAULT 0,
             gps TEXT
         );
 
@@ -381,7 +392,8 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
             width REAL NOT NULL,
             height REAL NOT NULL,
             color TEXT NOT NULL DEFAULT '#a61f28',
-            type TEXT NOT NULL DEFAULT 'wall'
+            type TEXT NOT NULL DEFAULT 'wall',
+            rotation_degrees REAL NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS requiescat_migrations (
@@ -418,11 +430,22 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
 
 fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceError> {
     validate_table_columns(connection, "requiescat_metadata", &["key", "value"])?;
-    validate_table_columns(
-        connection,
-        "graves",
-        &["id", "x", "y", "width", "height", "color", "gps"],
-    )?;
+    let version = schema_version(connection)?;
+    let grave_columns = if version >= 3 {
+        &[
+            "id",
+            "x",
+            "y",
+            "width",
+            "height",
+            "color",
+            "rotation_degrees",
+            "gps",
+        ][..]
+    } else {
+        &["id", "x", "y", "width", "height", "color", "gps"][..]
+    };
+    validate_table_columns(connection, "graves", grave_columns)?;
     validate_table_columns(
         connection,
         "persons",
@@ -448,18 +471,27 @@ fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceErr
         ));
     }
 
-    let version = schema_version(connection)?;
     if version > CURRENT_SCHEMA_VERSION {
         return Err(PersistenceError::InvalidData(format!(
             "Unsupported cemetery schema version: {version}"
         )));
     }
     if version >= 2 {
-        validate_table_columns(
-            connection,
-            "delimiters",
-            &["id", "x", "y", "width", "height", "color", "type"],
-        )?;
+        let delimiter_columns = if version >= 3 {
+            &[
+                "id",
+                "x",
+                "y",
+                "width",
+                "height",
+                "color",
+                "type",
+                "rotation_degrees",
+            ][..]
+        } else {
+            &["id", "x", "y", "width", "height", "color", "type"][..]
+        };
+        validate_table_columns(connection, "delimiters", delimiter_columns)?;
     }
 
     Ok(())
@@ -490,6 +522,18 @@ fn migrate_schema(connection: &Connection) -> Result<(), PersistenceError> {
             ",
         )?;
         version = 2;
+    }
+
+    if version < 3 {
+        connection.execute_batch(
+            "
+            ALTER TABLE graves ADD COLUMN rotation_degrees REAL NOT NULL DEFAULT 0;
+            ALTER TABLE delimiters ADD COLUMN rotation_degrees REAL NOT NULL DEFAULT 0;
+            INSERT OR IGNORE INTO requiescat_migrations (version) VALUES (3);
+            UPDATE requiescat_metadata SET value = '3' WHERE key = 'schema_version';
+            ",
+        )?;
+        version = 3;
     }
 
     if version > CURRENT_SCHEMA_VERSION {
@@ -570,6 +614,7 @@ struct GraveRow {
     width: f32,
     height: f32,
     color: String,
+    rotation_degrees: f32,
     gps: Option<String>,
 }
 
@@ -582,6 +627,7 @@ struct DelimiterRow {
     height: f32,
     color: String,
     delimiter_type: String,
+    rotation_degrees: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -608,6 +654,7 @@ impl From<Delimiter> for DelimiterRow {
             height: size.height,
             color: delimiter.color().to_hex(),
             delimiter_type: delimiter.delimiter_type().as_str().to_owned(),
+            rotation_degrees: delimiter.rotation_degrees(),
         }
     }
 }
@@ -630,6 +677,7 @@ impl TryFrom<DelimiterRow> for Delimiter {
                 Size::new(row.width, row.height),
             ),
             GraveColor::from_hex(&row.color).unwrap_or_default(),
+            row.rotation_degrees,
             delimiter_type,
         ))
     }
@@ -648,6 +696,7 @@ impl From<Grave> for GraveRow {
             width: size.width,
             height: size.height,
             color: grave.color().to_hex(),
+            rotation_degrees: grave.rotation_degrees(),
             gps: grave.gps().map(|gps| gps.to_string()),
         }
     }
@@ -677,6 +726,7 @@ impl TryFrom<GraveRow> for Grave {
                 Size::new(row.width, row.height),
             ),
             GraveColor::from_hex(&row.color).unwrap_or_default(),
+            row.rotation_degrees,
             gps,
         ))
     }
@@ -1120,11 +1170,13 @@ mod tests {
         );
         let grave_gps = GraveGps::parse("51° 30′ 26.64″ N, 0° 7′ 40.08″ W").unwrap();
         cemetery.update_grave_gps(grave_id, Some(grave_gps));
-        cemetery.add_delimiter_with_color_and_type(
+        cemetery.rotate_grave(grave_id, 45.0);
+        let delimiter_id = cemetery.add_delimiter_with_color_and_type(
             GraveRectangle::from_top_left_size(Point::new(2.0, 4.0), Size::new(200.0, 20.0)),
             GraveColor::from_rgb8(71, 141, 86),
             DelimiterType::Road,
         );
+        cemetery.rotate_delimiter(delimiter_id, 90.0);
         cemetery.create_person_with_details(
             "Ada".to_owned(),
             "Lovelace".to_owned(),
@@ -1143,10 +1195,15 @@ mod tests {
             loaded.grave(grave_id).map(Grave::gps),
             Some(Some(grave_gps))
         );
+        assert_eq!(
+            loaded.grave(grave_id).map(Grave::rotation_degrees),
+            Some(45.0)
+        );
         assert_eq!(loaded.search_people("").len(), 1);
         assert_eq!(loaded.search_people("Ada")[0].grave_id(), Some(grave_id));
         assert_eq!(loaded.delimiters().len(), 1);
         assert_eq!(loaded.delimiters()[0].delimiter_type(), DelimiterType::Road);
+        assert_eq!(loaded.delimiters()[0].rotation_degrees(), 90.0);
         assert_eq!(
             loaded.add_grave_with_color(
                 GraveRectangle::from_top_left_size(

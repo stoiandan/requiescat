@@ -7,7 +7,7 @@ use super::Tool;
 use super::delimiter_drawing;
 use super::drawing;
 use super::interaction;
-use super::map_editor::{MapEditor, Message};
+use super::map_editor::{MapEditor, MapObjectId, Message};
 use crate::localization::{Language, Localizer, MessageId};
 use crate::models::GraveId;
 
@@ -38,9 +38,12 @@ pub(super) enum DragState {
     Panning {
         previous_cursor: Point,
     },
-    MovingGrave {
-        id: GraveId,
+    MovingObject {
+        id: MapObjectId,
         previous_cursor: Point,
+    },
+    RotatingObject {
+        id: MapObjectId,
     },
 }
 
@@ -129,7 +132,7 @@ impl canvas::Program<Message> for LocalizedMapCanvas<'_> {
             );
         });
 
-        if state.current_drag_position().is_some() {
+        if state.current_drag_position().is_some() || !self.editor.rotation_targets().is_empty() {
             let mut preview = canvas::Frame::new(renderer, bounds.size());
             match self.editor.selected_tool() {
                 Tool::Draw => drawing::grave_preview(&mut preview, state, &self.editor.camera()),
@@ -141,6 +144,7 @@ impl canvas::Program<Message> for LocalizedMapCanvas<'_> {
                 ),
                 _ => {}
             }
+            drawing::rotation_handles(&mut preview, self.editor);
             vec![map, preview.into_geometry()]
         } else {
             vec![map]
@@ -169,9 +173,9 @@ impl canvas::Program<Message> for LocalizedMapCanvas<'_> {
                 iced::mouse::Interaction::Crosshair
             }
             Tool::Grab => match state.drag {
-                DragState::Panning { .. } | DragState::MovingGrave { .. } => {
-                    iced::mouse::Interaction::Grabbing
-                }
+                DragState::Panning { .. }
+                | DragState::MovingObject { .. }
+                | DragState::RotatingObject { .. } => iced::mouse::Interaction::Grabbing,
                 _ => iced::mouse::Interaction::Grab,
             },
             Tool::Erase => iced::mouse::Interaction::NoDrop,

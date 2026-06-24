@@ -54,6 +54,7 @@ impl CemeteryMap {
             id,
             rectangle,
             color,
+            0.0,
             delimiter_type,
         ));
         id
@@ -77,6 +78,18 @@ impl CemeteryMap {
 
     pub fn move_grave(&mut self, id: GraveId, delta: Vector) {
         self.update_grave(id, |grave| grave.translated(delta));
+    }
+
+    pub fn move_delimiter(&mut self, id: DelimiterId, delta: Vector) {
+        self.update_delimiter(id, |delimiter| delimiter.translated(delta));
+    }
+
+    pub fn rotate_grave(&mut self, id: GraveId, rotation_degrees: f32) -> bool {
+        self.update_grave(id, |grave| grave.with_rotation(rotation_degrees))
+    }
+
+    pub fn rotate_delimiter(&mut self, id: DelimiterId, rotation_degrees: f32) -> bool {
+        self.update_delimiter(id, |delimiter| delimiter.with_rotation(rotation_degrees))
     }
 
     pub fn update_grave_gps(&mut self, id: GraveId, gps: Option<GraveGps>) -> bool {
@@ -111,6 +124,12 @@ impl CemeteryMap {
         self.graves.iter().find(|grave| grave.id() == id)
     }
 
+    pub fn delimiter(&self, id: DelimiterId) -> Option<&Delimiter> {
+        self.delimiters
+            .iter()
+            .find(|delimiter| delimiter.id() == id)
+    }
+
     fn update_grave(&mut self, id: GraveId, update: impl FnOnce(Grave) -> Grave) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
@@ -122,6 +141,23 @@ impl CemeteryMap {
 
     fn index_of(&self, id: GraveId) -> Option<usize> {
         self.graves.iter().position(|grave| grave.id() == id)
+    }
+
+    fn update_delimiter(
+        &mut self,
+        id: DelimiterId,
+        update: impl FnOnce(Delimiter) -> Delimiter,
+    ) -> bool {
+        let Some(index) = self
+            .delimiters
+            .iter()
+            .position(|delimiter| delimiter.id() == id)
+        else {
+            return false;
+        };
+
+        self.delimiters[index] = update(self.delimiters[index]);
+        true
     }
 
     fn next_id(&mut self) -> GraveId {
@@ -231,6 +267,58 @@ mod tests {
             map.grave(stationary)
                 .map(|grave| grave.rectangle().top_left()),
             Some(Point::new(20.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn move_delimiter_translates_only_the_requested_delimiter() {
+        let mut map = CemeteryMap::default();
+        let moved = map.add_delimiter_with_color_and_type(
+            rectangle_at(0.0, 0.0),
+            GraveColor::default(),
+            DelimiterType::Wall,
+        );
+        let stationary = map.add_delimiter_with_color_and_type(
+            rectangle_at(20.0, 0.0),
+            GraveColor::default(),
+            DelimiterType::Road,
+        );
+
+        map.move_delimiter(moved, Vector::new(5.0, -2.0));
+
+        assert_eq!(
+            map.delimiter(moved)
+                .map(|delimiter| delimiter.rectangle().top_left()),
+            Some(Point::new(5.0, -2.0))
+        );
+        assert_eq!(
+            map.delimiter(stationary)
+                .map(|delimiter| delimiter.rectangle().top_left()),
+            Some(Point::new(20.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn rotating_objects_normalizes_their_angle() {
+        let mut map = CemeteryMap::default();
+        let grave = map.add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        let delimiter = map.add_delimiter_with_color_and_type(
+            rectangle_at(20.0, 0.0),
+            GraveColor::default(),
+            DelimiterType::Road,
+        );
+
+        assert!(map.rotate_grave(grave, 450.0));
+        assert!(map.rotate_delimiter(delimiter, -90.0));
+
+        assert_eq!(
+            map.grave(grave).map(|grave| grave.rotation_degrees()),
+            Some(90.0)
+        );
+        assert_eq!(
+            map.delimiter(delimiter)
+                .map(|delimiter| delimiter.rotation_degrees()),
+            Some(270.0)
         );
     }
 

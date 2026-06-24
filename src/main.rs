@@ -274,6 +274,12 @@ impl Requiescat {
                 if is_command_shortcut(&event, 'p') {
                     return self.open_person_directory();
                 }
+
+                if is_command_shortcut(&event, 'd') {
+                    return self.update(Message::Editor(
+                        MapEditorMessage::DuplicateLastGraveAtCursor,
+                    ));
+                }
             }
             Message::LanguageSelected(language) => {
                 self.close_app_menu();

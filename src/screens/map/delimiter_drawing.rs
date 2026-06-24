@@ -1,5 +1,5 @@
 use iced::widget::canvas;
-use iced::{Point, Rectangle, Size};
+use iced::{Point, Rectangle};
 
 use super::Camera;
 use super::map_canvas::CanvasState;
@@ -21,6 +21,7 @@ pub fn preview(
     draw_shape(
         frame,
         rectangle,
+        0.0,
         camera,
         iced::Color::WHITE,
         delimiter_type,
@@ -29,14 +30,18 @@ pub fn preview(
 }
 
 pub fn all(frame: &mut canvas::Frame, cemetery: &Cemetery, camera: &Camera, bounds: Rectangle) {
-    for delimiter in cemetery
-        .delimiters()
-        .iter()
-        .filter(|delimiter| rectangle_is_visible(delimiter.rectangle(), camera, bounds))
-    {
+    for delimiter in cemetery.delimiters().iter().filter(|delimiter| {
+        rectangle_is_visible(
+            delimiter.rectangle(),
+            delimiter.rotation_degrees(),
+            camera,
+            bounds,
+        )
+    }) {
         draw_shape(
             frame,
             delimiter.rectangle(),
+            delimiter.rotation_degrees(),
             camera,
             delimiter.color().to_iced(),
             delimiter.delimiter_type(),
@@ -48,27 +53,31 @@ pub fn all(frame: &mut canvas::Frame, cemetery: &Cemetery, camera: &Camera, boun
 fn draw_shape(
     frame: &mut canvas::Frame,
     rectangle: GraveRectangle,
+    rotation_degrees: f32,
     camera: &Camera,
     color: iced::Color,
     delimiter_type: DelimiterType,
     preview: bool,
 ) {
     match delimiter_type {
-        DelimiterType::Wall => draw_wall(frame, rectangle, camera, color, preview),
-        DelimiterType::Road => draw_road(frame, rectangle, camera, color, preview),
+        DelimiterType::Wall => {
+            draw_wall(frame, rectangle, rotation_degrees, camera, color, preview)
+        }
+        DelimiterType::Road => {
+            draw_road(frame, rectangle, rotation_degrees, camera, color, preview)
+        }
     }
 }
 
 fn draw_wall(
     frame: &mut canvas::Frame,
     rectangle: GraveRectangle,
+    rotation_degrees: f32,
     camera: &Camera,
     color: iced::Color,
     preview: bool,
 ) {
-    let screen = ScreenRectangle::from_map(rectangle, camera);
-    let outline = canvas::Path::rectangle(screen.top_left, screen.size);
-
+    let screen = ScreenRectangle::from_map(rectangle, rotation_degrees, camera);
     if screen.min_dimension() < 10.0 {
         return;
     }
@@ -84,121 +93,116 @@ fn draw_wall(
 fn draw_road(
     frame: &mut canvas::Frame,
     rectangle: GraveRectangle,
+    rotation_degrees: f32,
     camera: &Camera,
     color: iced::Color,
     preview: bool,
 ) {
-    let screen = ScreenRectangle::from_map(rectangle, camera);
-    let outline = canvas::Path::rectangle(screen.top_left, screen.size);
+    let screen = ScreenRectangle::from_map(rectangle, rotation_degrees, camera);
     let dash = canvas::LineDash {
         segments: &[10.0, 6.0],
         offset: 0,
     };
 
-    frame.stroke(
-        &screen.quarter(1),
-        canvas::Stroke {
-            width: if preview { 1.5 } else { 2.0 },
-            style: canvas::Style::Solid(color),
-            line_dash: dash,
-            ..Default::default()
-        },
-    );
-
+    for quarter in [1, 4] {
         frame.stroke(
-        &screen.quarter(4),
-        canvas::Stroke {
-            width: if preview { 1.5 } else { 2.0 },
-            style: canvas::Style::Solid(color),
-            line_dash: dash,
-            ..Default::default()
-        },
-    );
+            &screen.quarter_line(quarter),
+            canvas::Stroke {
+                width: if preview { 1.5 } else { 2.0 },
+                style: canvas::Style::Solid(color),
+                line_dash: dash,
+                ..Default::default()
+            },
+        );
+    }
 }
 
 fn wall_zig_zag(screen: ScreenRectangle) -> canvas::Path {
-    let inset = 5.0_f32.min(screen.min_dimension() / 4.0);
-    let x_center = screen.top_left.x + (screen.size.width / 2.0);
-    let bottom = screen.top_left_y() + screen.size.height;
-    let top_left_y = screen.top_left_y();
-    let amplitude = (screen.size.width / 5.0).clamp(3.0, 10.0);
+    let x_center = screen.width / 2.0;
+    let amplitude = (screen.width / 5.0).clamp(3.0, 10.0);
     let step = 20.0;
-    let mut y = top_left_y;
+    let mut y = 0.0;
     let mut zig = true;
 
     canvas::Path::new(|builder| {
-        builder.move_to(Point::new(x_center, top_left_y));
-        while y < bottom {
-            y = (y + step).min(bottom);
-            builder.line_to(Point::new(
+        builder.move_to(screen.point(x_center, 0.0));
+        while y < screen.height {
+            y = (y + step).min(screen.height);
+            builder.line_to(screen.point(
                 if zig {
                     x_center - amplitude
                 } else {
                     x_center + amplitude
                 },
-                y
+                y,
             ));
             zig = !zig;
         }
     })
 }
 
-fn preview_dash(preview: bool) -> canvas::LineDash<'static> {
-    if preview {
-        canvas::LineDash {
-            segments: &[6.0, 4.0],
-            offset: 0,
-        }
-    } else {
-        canvas::LineDash::default()
-    }
-}
+fn rectangle_is_visible(
+    rectangle: GraveRectangle,
+    rotation_degrees: f32,
+    camera: &Camera,
+    bounds: Rectangle,
+) -> bool {
+    let corners = rectangle
+        .corners_rotated(rotation_degrees)
+        .map(|corner| camera.world_to_screen(corner));
+    let min_x = corners
+        .iter()
+        .map(|corner| corner.x)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = corners
+        .iter()
+        .map(|corner| corner.x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = corners
+        .iter()
+        .map(|corner| corner.y)
+        .fold(f32::INFINITY, f32::min);
+    let max_y = corners
+        .iter()
+        .map(|corner| corner.y)
+        .fold(f32::NEG_INFINITY, f32::max);
 
-fn rectangle_is_visible(rectangle: GraveRectangle, camera: &Camera, bounds: Rectangle) -> bool {
-    let screen = ScreenRectangle::from_map(rectangle, camera);
-
-    screen.right() >= 0.0
-        && screen.bottom() >= 0.0
-        && screen.top_left.x <= bounds.width
-        && screen.top_left.y <= bounds.height
+    max_x >= 0.0 && max_y >= 0.0 && min_x <= bounds.width && min_y <= bounds.height
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ScreenRectangle {
-    top_left: Point,
-    size: Size,
+    rectangle: GraveRectangle,
+    rotation_degrees: f32,
+    width: f32,
+    height: f32,
+    camera: Camera,
 }
 
 impl ScreenRectangle {
-    fn from_map(rectangle: GraveRectangle, camera: &Camera) -> Self {
+    fn from_map(rectangle: GraveRectangle, rotation_degrees: f32, camera: &Camera) -> Self {
         Self {
-            top_left: camera.world_to_screen(rectangle.top_left()),
-            size: rectangle.size() * camera.zoom,
+            rectangle,
+            rotation_degrees,
+            width: rectangle.size().width,
+            height: rectangle.size().height,
+            camera: *camera,
         }
     }
 
-    fn right(self) -> f32 {
-        self.top_left.x + self.size.width
-    }
-
-    fn bottom(self) -> f32 {
-        self.top_left.y + self.size.height
-    }
-
-    fn top_left_y(self) -> f32 {
-        self.top_left.y
-    }
-
     fn min_dimension(self) -> f32 {
-        self.size.width.min(self.size.height)
+        (self.width * self.camera.zoom).min(self.height * self.camera.zoom)
     }
 
-    fn quarter(self, quarter: u32) -> canvas::Path {
+    fn quarter_line(self, quarter: u32) -> canvas::Path {
         let quarter = quarter.clamp(1, 4);
-        canvas::Path::line(
-            Point::new(self.top_left.x + self.size.width / quarter as f32, self.top_left.y),
-            Point::new(self.top_left.x + self.size.width / quarter as f32, self.top_left.y + self.size.height),
-        )
+        let x = self.width / quarter as f32;
+
+        canvas::Path::line(self.point(x, 0.0), self.point(x, self.height))
     }
-    
+
+    fn point(self, x: f32, y: f32) -> Point {
+        self.camera
+            .world_to_screen(self.rectangle.point_at_rotated(x, y, self.rotation_degrees))
+    }
 }

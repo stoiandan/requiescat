@@ -1,5 +1,7 @@
 use std::fmt::Write as _;
 
+use iced::Point;
+
 #[derive(Default)]
 pub(super) struct PdfContent {
     value: String,
@@ -24,6 +26,18 @@ impl PdfContent {
 
     pub(super) fn rectangle(&mut self, x: f32, y: f32, width: f32, height: f32) {
         let _ = writeln!(self.value, "{x:.2} {y:.2} {width:.2} {height:.2} re");
+    }
+
+    pub(super) fn polygon(&mut self, points: &[Point]) {
+        let Some((first, remaining)) = points.split_first() else {
+            return;
+        };
+
+        let _ = writeln!(self.value, "{:.2} {:.2} m", first.x, first.y);
+        for point in remaining {
+            let _ = writeln!(self.value, "{:.2} {:.2} l", point.x, point.y);
+        }
+        self.value.push_str("h\n");
     }
 
     pub(super) fn fill(&mut self) {

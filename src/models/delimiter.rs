@@ -1,5 +1,6 @@
-use iced::Point;
+use iced::{Point, Vector};
 
+use super::grave::normalize_rotation;
 use super::{DelimiterId, GraveColor, GraveRectangle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +39,7 @@ pub struct Delimiter {
     id: DelimiterId,
     rectangle: GraveRectangle,
     color: GraveColor,
+    rotation_degrees: f32,
     delimiter_type: DelimiterType,
 }
 
@@ -46,12 +48,14 @@ impl Delimiter {
         id: DelimiterId,
         rectangle: GraveRectangle,
         color: GraveColor,
+        rotation_degrees: f32,
         delimiter_type: DelimiterType,
     ) -> Self {
         Self {
             id,
             rectangle,
             color,
+            rotation_degrees,
             delimiter_type,
         }
     }
@@ -68,11 +72,30 @@ impl Delimiter {
         self.color
     }
 
+    pub fn rotation_degrees(&self) -> f32 {
+        self.rotation_degrees
+    }
+
     pub fn delimiter_type(&self) -> DelimiterType {
         self.delimiter_type
     }
 
     pub fn contains(&self, point: Point) -> bool {
-        self.rectangle.contains(point)
+        self.rectangle
+            .contains_rotated(point, self.rotation_degrees)
+    }
+
+    pub fn translated(self, delta: Vector) -> Self {
+        Self {
+            rectangle: self.rectangle.translated(delta),
+            ..self
+        }
+    }
+
+    pub fn with_rotation(self, rotation_degrees: f32) -> Self {
+        Self {
+            rotation_degrees: normalize_rotation(rotation_degrees),
+            ..self
+        }
     }
 }

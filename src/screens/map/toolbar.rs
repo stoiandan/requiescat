@@ -20,6 +20,8 @@ pub enum ToolbarAction {
     ToggleGrid,
     ToggleColorPicker,
     ToggleDelimiterTypePicker,
+    ToggleEditMenu,
+    DuplicateLastGrave,
     SelectGraveColor(GraveColor),
     SelectDelimiterType(DelimiterType),
 }
@@ -31,6 +33,7 @@ pub(super) struct Toolbar {
     selected_delimiter_type: DelimiterType,
     show_color_picker: bool,
     show_delimiter_type_picker: bool,
+    show_edit_menu: bool,
 }
 
 impl Default for Toolbar {
@@ -42,13 +45,19 @@ impl Default for Toolbar {
             selected_delimiter_type: DelimiterType::default(),
             show_color_picker: false,
             show_delimiter_type_picker: false,
+            show_edit_menu: false,
         }
     }
 }
 
 impl Toolbar {
-    pub fn view<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, ToolbarAction> {
+    pub fn view<'a>(
+        &'a self,
+        localizer: &'a Localizer,
+        can_duplicate_last_grave: bool,
+    ) -> Element<'a, ToolbarAction> {
         let tools = row![
+            edit_menu_button(localizer.text(MessageId::ToolEdit)),
             tool_button(
                 "ⓘ",
                 ToolbarAction::SelectTool(Tool::Select),
@@ -97,7 +106,19 @@ impl Toolbar {
         ]
         .spacing(8);
 
-        let content = if self.show_delimiter_type_picker {
+        let content = if self.show_edit_menu {
+            column![
+                container(edit_menu(
+                    localizer.text(MessageId::ToolDuplicateLastGrave),
+                    can_duplicate_last_grave,
+                ))
+                .width(Length::Fill)
+                .align_x(iced::Alignment::Start),
+                tools
+            ]
+            .spacing(8)
+            .align_x(iced::Alignment::Center)
+        } else if self.show_delimiter_type_picker {
             column![
                 container(delimiter_type_palette(
                     self.selected_delimiter_type,
@@ -157,15 +178,26 @@ impl Toolbar {
                 self.selected_tool = tool;
                 self.show_color_picker = false;
                 self.show_delimiter_type_picker = false;
+                self.show_edit_menu = false;
             }
             ToolbarAction::ToggleColorPicker => {
                 self.show_color_picker = !self.show_color_picker;
                 self.show_delimiter_type_picker = false;
+                self.show_edit_menu = false;
             }
             ToolbarAction::ToggleDelimiterTypePicker => {
                 self.selected_tool = Tool::DrawDelimiter;
                 self.show_delimiter_type_picker = !self.show_delimiter_type_picker;
                 self.show_color_picker = false;
+                self.show_edit_menu = false;
+            }
+            ToolbarAction::ToggleEditMenu => {
+                self.show_edit_menu = !self.show_edit_menu;
+                self.show_color_picker = false;
+                self.show_delimiter_type_picker = false;
+            }
+            ToolbarAction::DuplicateLastGrave => {
+                self.show_edit_menu = false;
             }
             ToolbarAction::SelectGraveColor(color) => {
                 self.selected_grave_color = color;
@@ -175,6 +207,7 @@ impl Toolbar {
                 self.selected_tool = Tool::DrawDelimiter;
                 self.selected_delimiter_type = delimiter_type;
                 self.show_delimiter_type_picker = false;
+                self.show_edit_menu = false;
             }
         }
     }
@@ -234,6 +267,34 @@ fn delimiter_tool_button(
         selected,
         label,
     )
+}
+
+fn edit_menu_button(label: String) -> Element<'static, ToolbarAction> {
+    tooltip_button(
+        button(text(label.clone()).size(14))
+            .height(44)
+            .padding([0, 12])
+            .on_press(ToolbarAction::ToggleEditMenu)
+            .style(move |_, status| teal_button_style(status, false, 3.0)),
+        label,
+    )
+}
+
+fn edit_menu(label: String, can_duplicate_last_grave: bool) -> Element<'static, ToolbarAction> {
+    let mut duplicate = button(text(label).size(13))
+        .width(Length::Fill)
+        .padding([6, 12])
+        .style(edit_menu_item_button);
+
+    if can_duplicate_last_grave {
+        duplicate = duplicate.on_press(ToolbarAction::DuplicateLastGrave);
+    }
+
+    container(column![duplicate].spacing(1))
+        .width(Length::Fixed(190.0))
+        .padding([5, 0])
+        .style(|_| picker_panel_style())
+        .into()
 }
 
 fn delimiter_type_palette(
@@ -379,6 +440,30 @@ fn color_button_style(status: button::Status, color: GraveColor, selected: bool)
                 Vector::new(0.0, 3.0)
             },
             blur_radius: if pressed { 1.0 } else { 2.0 },
+        },
+        ..Default::default()
+    }
+}
+
+fn edit_menu_item_button(_: &iced::Theme, status: button::Status) -> button::Style {
+    let hovered = status == button::Status::Hovered;
+    let disabled = status == button::Status::Disabled;
+
+    button::Style {
+        background: Some(Background::Color(if hovered && !disabled {
+            Color::from_rgb8(24, 91, 95)
+        } else {
+            Color::from_rgb8(16, 55, 59)
+        })),
+        text_color: if disabled {
+            Color::from_rgb8(110, 148, 151)
+        } else {
+            Color::WHITE
+        },
+        border: Border {
+            color: Color::from_rgba8(112, 207, 208, 0.25),
+            width: 1.0,
+            radius: 2.0.into(),
         },
         ..Default::default()
     }

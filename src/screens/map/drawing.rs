@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::widget::canvas;
-use iced::{Point, Rectangle, Size};
+use iced::{Point, Rectangle, Vector};
 
 use super::Camera;
 use super::map_canvas::CanvasState;
+use super::map_editor::MapEditor;
 use crate::models::{Cemetery, GraveId, GraveRectangle};
 
 pub fn grid(frame: &mut canvas::Frame, camera: &Camera, bounds: Rectangle) {
@@ -79,8 +80,7 @@ pub fn grave_preview(frame: &mut canvas::Frame, state: &CanvasState, camera: &Ca
     if let Some(current_drag) = state.current_drag_position() {
         let start = state.left_pressed_at().unwrap_or(current_drag);
         let preview = GraveRectangle::from_corners(start, current_drag);
-        let (top_left, size) = screen_rectangle(preview, camera);
-        let path = canvas::Path::rectangle(top_left, size);
+        let path = rotated_rectangle_path(preview, 0.0, camera);
 
         frame.stroke(
             &path,
@@ -97,6 +97,25 @@ pub fn grave_preview(frame: &mut canvas::Frame, state: &CanvasState, camera: &Ca
     }
 }
 
+pub fn rotation_handles(frame: &mut canvas::Frame, editor: &MapEditor) {
+    for id in editor.rotation_targets() {
+        let Some(position) = editor.rotation_handle_position(id) else {
+            continue;
+        };
+
+        let screen_position = editor.camera().world_to_screen(position);
+        let dot = canvas::Path::circle(screen_position, 6.0);
+
+        frame.fill(&dot, iced::Color::WHITE);
+        frame.stroke(
+            &dot,
+            canvas::Stroke::default()
+                .with_color(iced::Color::from_rgb8(16, 132, 122))
+                .with_width(2.0),
+        );
+    }
+}
+
 pub fn graves(
     frame: &mut canvas::Frame,
     cemetery: &Cemetery,
@@ -108,7 +127,9 @@ pub fn graves(
     let visible_graves = cemetery
         .graves()
         .iter()
-        .filter(|grave| grave_is_visible(grave.rectangle(), camera, bounds))
+        .filter(|grave| {
+            grave_is_visible(grave.rectangle(), grave.rotation_degrees(), camera, bounds)
+        })
         .collect::<Vec<_>>();
     let visible_grave_ids = visible_graves
         .iter()
@@ -118,10 +139,10 @@ pub fn graves(
 
     for grave in visible_graves {
         let rectangle = grave.rectangle();
-        let (top_left, size) = screen_rectangle(rectangle, camera);
+        let path = rotated_rectangle_path(rectangle, grave.rotation_degrees(), camera);
         let grave_id = grave.id();
 
-        frame.fill_rectangle(top_left, size, grave.color().to_iced());
+        frame.fill(&path, grave.color().to_iced());
         grave_labels(
             frame,
             labels_by_grave
@@ -129,13 +150,12 @@ pub fn graves(
                 .map(Vec::as_slice)
                 .unwrap_or_default(),
             &grave_label(grave_id),
-            top_left,
-            size,
+            rectangle,
+            grave.rotation_degrees(),
+            camera,
         );
 
         if Some(grave_id) == selected_grave {
-            let path = canvas::Path::rectangle(top_left, size);
-
             frame.stroke(
                 &path,
                 canvas::Stroke::default()
@@ -146,32 +166,68 @@ pub fn graves(
     }
 }
 
-fn grave_is_visible(rectangle: GraveRectangle, camera: &Camera, bounds: Rectangle) -> bool {
-    let (top_left, size) = screen_rectangle(rectangle, camera);
-    let right = top_left.x + size.width;
-    let bottom = top_left.y + size.height;
+fn grave_is_visible(
+    rectangle: GraveRectangle,
+    rotation_degrees: f32,
+    camera: &Camera,
+    bounds: Rectangle,
+) -> bool {
+    let corners = rectangle
+        .corners_rotated(rotation_degrees)
+        .map(|corner| camera.world_to_screen(corner));
+    let min_x = corners
+        .iter()
+        .map(|corner| corner.x)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = corners
+        .iter()
+        .map(|corner| corner.x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = corners
+        .iter()
+        .map(|corner| corner.y)
+        .fold(f32::INFINITY, f32::min);
+    let max_y = corners
+        .iter()
+        .map(|corner| corner.y)
+        .fold(f32::NEG_INFINITY, f32::max);
 
-    right >= 0.0 && bottom >= 0.0 && top_left.x <= bounds.width && top_left.y <= bounds.height
+    max_x >= 0.0 && max_y >= 0.0 && min_x <= bounds.width && min_y <= bounds.height
 }
 
-fn screen_rectangle(rectangle: GraveRectangle, camera: &Camera) -> (Point, Size) {
-    (
-        camera.world_to_screen(rectangle.top_left()),
-        rectangle.size() * camera.zoom,
-    )
+fn rotated_rectangle_path(
+    rectangle: GraveRectangle,
+    rotation_degrees: f32,
+    camera: &Camera,
+) -> canvas::Path {
+    let corners = rectangle
+        .corners_rotated(rotation_degrees)
+        .map(|corner| camera.world_to_screen(corner));
+
+    canvas::Path::new(|builder| {
+        builder.move_to(corners[0]);
+        builder.line_to(corners[1]);
+        builder.line_to(corners[2]);
+        builder.line_to(corners[3]);
+        builder.close();
+    })
 }
 
 fn grave_labels(
     frame: &mut canvas::Frame,
     rows: &[String],
     fallback: &str,
-    top_left: Point,
-    size: iced::Size,
+    rectangle: GraveRectangle,
+    rotation_degrees: f32,
+    camera: &Camera,
 ) {
     const PADDING: f32 = 1.0;
     const MIN_FONT_SIZE: f32 = 9.0;
     const MAX_FONT_SIZE: f32 = 13.0;
 
+    let top_left = camera.world_to_screen(rectangle.top_left());
+    let center = camera.world_to_screen(rectangle.center());
+    let size = rectangle.size() * camera.zoom;
     let font_size = label_font_size(size.width);
     let row_height = font_size * 1.25;
     let max_rows = ((size.height - PADDING * 2.0) / row_height).floor() as usize;
@@ -183,26 +239,32 @@ fn grave_labels(
     let max_width = (size.width - PADDING * 2.0).max(0.0);
     let max_characters = label_character_capacity(max_width, font_size);
 
-    for (index, row) in rows.into_iter().enumerate() {
-        let row = truncate_label(&row, max_characters);
-        if row.is_empty() {
-            continue;
-        }
+    frame.with_save(|frame| {
+        frame.translate(Vector::new(center.x, center.y));
+        frame.rotate(rotation_degrees.to_radians());
+        frame.translate(Vector::new(-center.x, -center.y));
 
-        frame.fill_text(canvas::Text {
-            content: row,
-            position: Point::new(
-                top_left.x + size.width / 2.0,
-                top_left.y + PADDING + index as f32 * row_height + row_height / 2.0,
-            ),
-            max_width,
-            color: iced::Color::WHITE,
-            size: iced::Pixels(font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)),
-            align_x: iced::alignment::Horizontal::Center.into(),
-            align_y: iced::alignment::Vertical::Center,
-            ..Default::default()
-        });
-    }
+        for (index, row) in rows.into_iter().enumerate() {
+            let row = truncate_label(&row, max_characters);
+            if row.is_empty() {
+                continue;
+            }
+
+            frame.fill_text(canvas::Text {
+                content: row,
+                position: Point::new(
+                    top_left.x + size.width / 2.0,
+                    top_left.y + PADDING + index as f32 * row_height + row_height / 2.0,
+                ),
+                max_width,
+                color: iced::Color::WHITE,
+                size: iced::Pixels(font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)),
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Center,
+                ..Default::default()
+            });
+        }
+    });
 }
 
 fn label_font_size(screen_width: f32) -> f32 {

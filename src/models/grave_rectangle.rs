@@ -33,11 +33,38 @@ impl GraveRectangle {
         )
     }
 
+    pub fn corners_rotated(&self, rotation_degrees: f32) -> [Point; 4] {
+        let top_left = self.top_left();
+        let top_right = Point::new(top_left.x + self.size.width, top_left.y);
+        let bottom_right = Point::new(top_left.x + self.size.width, top_left.y + self.size.height);
+        let bottom_left = Point::new(top_left.x, top_left.y + self.size.height);
+        let center = self.center();
+
+        [
+            rotate_point(top_left, center, rotation_degrees),
+            rotate_point(top_right, center, rotation_degrees),
+            rotate_point(bottom_right, center, rotation_degrees),
+            rotate_point(bottom_left, center, rotation_degrees),
+        ]
+    }
+
+    pub fn point_at_rotated(&self, x: f32, y: f32, rotation_degrees: f32) -> Point {
+        rotate_point(
+            Point::new(self.top_left.x + x, self.top_left.y + y),
+            self.center(),
+            rotation_degrees,
+        )
+    }
+
     pub fn contains(&self, point: Point) -> bool {
         point.x >= self.top_left.x
             && point.x <= self.top_left.x + self.size.width
             && point.y >= self.top_left.y
             && point.y <= self.top_left.y + self.size.height
+    }
+
+    pub fn contains_rotated(&self, point: Point, rotation_degrees: f32) -> bool {
+        self.contains(rotate_point(point, self.center(), -rotation_degrees))
     }
 
     pub fn translated(self, delta: Vector) -> Self {
@@ -46,6 +73,15 @@ impl GraveRectangle {
             ..self
         }
     }
+}
+
+pub fn rotate_point(point: Point, center: Point, rotation_degrees: f32) -> Point {
+    let radians = rotation_degrees.to_radians();
+    let (sin, cos) = radians.sin_cos();
+    let x = point.x - center.x;
+    let y = point.y - center.y;
+
+    Point::new(center.x + x * cos - y * sin, center.y + x * sin + y * cos)
 }
 
 #[cfg(test)]
@@ -70,6 +106,15 @@ mod tests {
         assert!(rectangle.contains(Point::new(25.0, 45.0)));
         assert!(!rectangle.contains(Point::new(9.9, 45.0)));
         assert!(!rectangle.contains(Point::new(25.0, 60.1)));
+    }
+
+    #[test]
+    fn contains_rotated_checks_points_in_rotated_space() {
+        let rectangle =
+            GraveRectangle::from_top_left_size(Point::new(0.0, 0.0), Size::new(20.0, 10.0));
+
+        assert!(rectangle.contains_rotated(rectangle.center(), 45.0));
+        assert!(!rectangle.contains_rotated(Point::new(20.0, 10.0), 45.0));
     }
 
     #[test]

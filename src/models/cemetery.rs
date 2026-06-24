@@ -57,6 +57,18 @@ impl Cemetery {
         self.map.move_grave(id, delta);
     }
 
+    pub fn move_delimiter(&mut self, id: DelimiterId, delta: Vector) {
+        self.map.move_delimiter(id, delta);
+    }
+
+    pub fn rotate_grave(&mut self, id: GraveId, rotation_degrees: f32) -> bool {
+        self.map.rotate_grave(id, rotation_degrees)
+    }
+
+    pub fn rotate_delimiter(&mut self, id: DelimiterId, rotation_degrees: f32) -> bool {
+        self.map.rotate_delimiter(id, rotation_degrees)
+    }
+
     pub fn update_grave_gps(&mut self, id: GraveId, gps: Option<GraveGps>) -> bool {
         self.map.update_grave_gps(id, gps)
     }
@@ -71,6 +83,10 @@ impl Cemetery {
 
     pub fn grave(&self, id: GraveId) -> Option<&Grave> {
         self.map.grave(id)
+    }
+
+    pub fn delimiter(&self, id: DelimiterId) -> Option<&Delimiter> {
+        self.map.delimiter(id)
     }
 
     pub fn graves(&self) -> &[Grave] {

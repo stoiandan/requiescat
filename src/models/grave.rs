@@ -7,6 +7,7 @@ pub struct Grave {
     id: GraveId,
     rectangle: GraveRectangle,
     color: GraveColor,
+    rotation_degrees: f32,
     gps: Option<GraveGps>,
 }
 
@@ -16,6 +17,7 @@ impl Grave {
             id,
             rectangle,
             color,
+            rotation_degrees: 0.0,
             gps: None,
         }
     }
@@ -24,12 +26,14 @@ impl Grave {
         id: GraveId,
         rectangle: GraveRectangle,
         color: GraveColor,
+        rotation_degrees: f32,
         gps: Option<GraveGps>,
     ) -> Self {
         Self {
             id,
             rectangle,
             color,
+            rotation_degrees,
             gps,
         }
     }
@@ -46,6 +50,10 @@ impl Grave {
         self.color
     }
 
+    pub fn rotation_degrees(&self) -> f32 {
+        self.rotation_degrees
+    }
+
     pub fn gps(&self) -> Option<GraveGps> {
         self.gps
     }
@@ -58,8 +66,16 @@ impl Grave {
         Self { gps, ..self }
     }
 
+    pub fn with_rotation(self, rotation_degrees: f32) -> Self {
+        Self {
+            rotation_degrees: normalize_rotation(rotation_degrees),
+            ..self
+        }
+    }
+
     pub fn contains(&self, point: Point) -> bool {
-        self.rectangle.contains(point)
+        self.rectangle
+            .contains_rotated(point, self.rotation_degrees)
     }
 
     pub fn translated(self, delta: Vector) -> Self {
@@ -68,6 +84,10 @@ impl Grave {
             ..self
         }
     }
+}
+
+pub fn normalize_rotation(rotation_degrees: f32) -> f32 {
+    rotation_degrees.rem_euclid(360.0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

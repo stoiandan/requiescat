@@ -19,6 +19,8 @@ pub struct MapEditor {
     toolbar: Toolbar,
     camera: Camera,
     selected_grave: Option<GraveId>,
+    last_created_grave: Option<GraveId>,
+    canvas_cursor: Option<Point>,
     selected_person: Option<PersonId>,
     person_search: String,
     new_person: NewPersonDraft,
@@ -38,11 +40,23 @@ pub enum Message {
     CreateGrave(GraveRectangle),
     CreateDelimiter(GraveRectangle),
     ToolBarAction(ToolbarAction),
+    CanvasCursorChanged(Option<Point>),
+    DuplicateLastGraveAtCursor,
     EraseGrave(GraveId),
     EraseDelimiter(DelimiterId),
-    MoveGrave { id: GraveId, delta: iced::Vector },
+    MoveMapObject {
+        id: MapObjectId,
+        delta: iced::Vector,
+    },
+    RotateMapObject {
+        id: MapObjectId,
+        rotation_degrees: f32,
+    },
     PanCamera(iced::Vector),
-    ZoomCamera { cursor: Point, amount: f32 },
+    ZoomCamera {
+        cursor: Point,
+        amount: f32,
+    },
     SelectGrave(Option<GraveId>),
     UpdateGraveGps(GraveId, String),
     SelectPerson(PersonId),
@@ -54,6 +68,12 @@ pub enum Message {
     UpdatePersonDateOfBirth(PersonId, String),
     UpdatePersonDateOfDecease(PersonId, String),
     CommitPendingChanges,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapObjectId {
+    Grave(GraveId),
+    Delimiter(DelimiterId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,8 +119,11 @@ impl MapEditor {
                 UpdateOutcome::Unchanged
             }
             Message::CreateGrave(rectangle) => {
-                self.cemetery
+                let id = self
+                    .cemetery
                     .add_grave_with_color(rectangle, self.toolbar.selected_grave_color());
+                self.selected_grave = Some(id);
+                self.remember_created_grave(id);
                 self.invalidate_map();
                 UpdateOutcome::Changed
             }
@@ -115,12 +138,23 @@ impl MapEditor {
             }
             Message::ToolBarAction(action) => {
                 let previous_show_grid = self.toolbar.show_grid();
+                let previous_rotation_targets = self.rotation_targets();
                 self.toolbar.update(action);
-                if self.toolbar.show_grid() != previous_show_grid {
+                if action == ToolbarAction::DuplicateLastGrave {
+                    return self.duplicate_last_grave_at_cursor();
+                }
+                if self.toolbar.show_grid() != previous_show_grid
+                    || self.rotation_targets() != previous_rotation_targets
+                {
                     self.invalidate_map();
                 }
                 UpdateOutcome::Unchanged
             }
+            Message::CanvasCursorChanged(cursor) => {
+                self.canvas_cursor = cursor;
+                UpdateOutcome::Unchanged
+            }
+            Message::DuplicateLastGraveAtCursor => self.duplicate_last_grave_at_cursor(),
             Message::EraseGrave(id) => {
                 self.cemetery.erase_grave(id);
                 if self.selected_grave == Some(id) {
@@ -134,10 +168,21 @@ impl MapEditor {
                 self.invalidate_map();
                 UpdateOutcome::Changed
             }
-            Message::MoveGrave { id, delta } => {
-                self.cemetery.move_grave(id, delta);
+            Message::MoveMapObject { id, delta } => {
+                self.move_map_object(id, delta);
                 self.invalidate_map();
                 UpdateOutcome::DeferredChange
+            }
+            Message::RotateMapObject {
+                id,
+                rotation_degrees,
+            } => {
+                if self.rotate_map_object(id, rotation_degrees) {
+                    self.invalidate_map();
+                    UpdateOutcome::DeferredChange
+                } else {
+                    UpdateOutcome::Unchanged
+                }
             }
             Message::PanCamera(delta) => {
                 self.camera.pan_by_canvas_delta(delta);
@@ -218,9 +263,13 @@ impl MapEditor {
             map_row = map_row.push(self.side_panel(localizer, grave_id));
         }
 
-        let mut footer = row![self.toolbar.view(localizer).map(Message::ToolBarAction)]
-            .spacing(8)
-            .padding([8, 12]);
+        let mut footer = row![
+            self.toolbar
+                .view(localizer, self.can_duplicate_last_grave())
+                .map(Message::ToolBarAction)
+        ]
+        .spacing(8)
+        .padding([8, 12]);
 
         if let Some(status) = save_status {
             footer = footer.push(
@@ -679,6 +728,55 @@ impl MapEditor {
         }
     }
 
+    fn move_map_object(&mut self, id: MapObjectId, delta: Vector) {
+        match id {
+            MapObjectId::Grave(id) => self.cemetery.move_grave(id, delta),
+            MapObjectId::Delimiter(id) => self.cemetery.move_delimiter(id, delta),
+        }
+    }
+
+    fn rotate_map_object(&mut self, id: MapObjectId, rotation_degrees: f32) -> bool {
+        match id {
+            MapObjectId::Grave(id) => self.cemetery.rotate_grave(id, rotation_degrees),
+            MapObjectId::Delimiter(id) => self.cemetery.rotate_delimiter(id, rotation_degrees),
+        }
+    }
+
+    fn duplicate_last_grave_at_cursor(&mut self) -> UpdateOutcome {
+        let (Some(last_created_grave), Some(top_left)) =
+            (self.last_created_grave(), self.canvas_cursor)
+        else {
+            return UpdateOutcome::Unchanged;
+        };
+
+        let rectangle =
+            GraveRectangle::from_top_left_size(top_left, last_created_grave.rectangle().size());
+        let id = self
+            .cemetery
+            .add_grave_with_color(rectangle, last_created_grave.color());
+        self.cemetery
+            .rotate_grave(id, last_created_grave.rotation_degrees());
+        self.selected_grave = Some(id);
+        self.remember_created_grave(id);
+        self.invalidate_map();
+
+        UpdateOutcome::Changed
+    }
+
+    fn remember_created_grave(&mut self, id: GraveId) {
+        self.last_created_grave = Some(id);
+    }
+
+    fn can_duplicate_last_grave(&self) -> bool {
+        self.last_created_grave().is_some()
+    }
+
+    fn last_created_grave(&self) -> Option<crate::models::Grave> {
+        self.last_created_grave
+            .and_then(|id| self.cemetery.grave(id))
+            .copied()
+    }
+
     pub(super) fn selected_tool(&self) -> Tool {
         self.toolbar.selected_tool()
     }
@@ -693,6 +791,81 @@ impl MapEditor {
 
     pub(super) fn render_revision(&self) -> u64 {
         self.render_revision
+    }
+
+    pub(super) fn object_at(&self, point: Point) -> Option<MapObjectId> {
+        self.cemetery
+            .grave_at(point)
+            .map(MapObjectId::Grave)
+            .or_else(|| {
+                self.cemetery
+                    .delimiter_at(point)
+                    .map(MapObjectId::Delimiter)
+            })
+    }
+
+    pub(super) fn rotation_targets(&self) -> Vec<MapObjectId> {
+        if !matches!(self.selected_tool(), Tool::Grab) {
+            return Vec::new();
+        }
+
+        self.cemetery
+            .graves()
+            .iter()
+            .map(|grave| MapObjectId::Grave(grave.id()))
+            .chain(
+                self.cemetery
+                    .delimiters()
+                    .iter()
+                    .map(|delimiter| MapObjectId::Delimiter(delimiter.id())),
+            )
+            .collect()
+    }
+
+    pub(super) fn rotation_handle_position(&self, id: MapObjectId) -> Option<Point> {
+        let rectangle = self.object_rectangle(id)?;
+        let rotation_degrees = self.object_rotation_degrees(id)?;
+        let handle_offset = 24.0 / self.camera.zoom.max(0.1);
+
+        Some(rectangle.point_at_rotated(
+            rectangle.size().width / 2.0,
+            -handle_offset,
+            rotation_degrees,
+        ))
+    }
+
+    pub(super) fn rotation_degrees_for_cursor(
+        &self,
+        id: MapObjectId,
+        world_cursor: Point,
+    ) -> Option<f32> {
+        let center = self.object_rectangle(id)?.center();
+        let delta = world_cursor - center;
+
+        Some(delta.y.atan2(delta.x).to_degrees() + 90.0)
+    }
+
+    fn object_rectangle(&self, id: MapObjectId) -> Option<GraveRectangle> {
+        match id {
+            MapObjectId::Grave(id) => self.cemetery.grave(id).map(|grave| grave.rectangle()),
+            MapObjectId::Delimiter(id) => self
+                .cemetery
+                .delimiter(id)
+                .map(|delimiter| delimiter.rectangle()),
+        }
+    }
+
+    fn object_rotation_degrees(&self, id: MapObjectId) -> Option<f32> {
+        match id {
+            MapObjectId::Grave(id) => self
+                .cemetery
+                .grave(id)
+                .map(|grave| grave.rotation_degrees()),
+            MapObjectId::Delimiter(id) => self
+                .cemetery
+                .delimiter(id)
+                .map(|delimiter| delimiter.rotation_degrees()),
+        }
     }
 
     fn invalidate_map(&mut self) {
@@ -952,6 +1125,52 @@ mod tests {
         editor.update(Message::CreateGrave(rectangle_at(0.0, 0.0)));
 
         assert_eq!(editor.cemetery.graves()[0].color(), color);
+    }
+
+    #[test]
+    fn duplicate_last_grave_requires_a_created_grave_and_canvas_cursor() {
+        let mut editor = MapEditor::default();
+
+        assert!(!editor.can_duplicate_last_grave());
+        assert_eq!(
+            editor.update(Message::DuplicateLastGraveAtCursor),
+            UpdateOutcome::Unchanged
+        );
+
+        editor.update(Message::CreateGrave(rectangle_at(0.0, 0.0)));
+        assert!(editor.can_duplicate_last_grave());
+        assert_eq!(
+            editor.update(Message::DuplicateLastGraveAtCursor),
+            UpdateOutcome::Unchanged
+        );
+        assert_eq!(editor.cemetery.graves().len(), 1);
+    }
+
+    #[test]
+    fn duplicate_last_grave_uses_current_size_color_and_rotation_with_a_new_id() {
+        let mut editor = MapEditor::default();
+        let color = crate::models::GraveColor::from_rgb8(122, 77, 161);
+
+        editor.update(Message::ToolBarAction(ToolbarAction::SelectGraveColor(
+            color,
+        )));
+        editor.update(Message::CreateGrave(rectangle_at(0.0, 0.0)));
+        editor.update(Message::RotateMapObject {
+            id: MapObjectId::Grave(GraveId::new(1)),
+            rotation_degrees: 35.0,
+        });
+        editor.update(Message::CanvasCursorChanged(Some(Point::new(100.0, 200.0))));
+
+        assert_eq!(
+            editor.update(Message::DuplicateLastGraveAtCursor),
+            UpdateOutcome::Changed
+        );
+
+        let duplicated = editor.cemetery.grave(GraveId::new(2)).unwrap();
+        assert_eq!(duplicated.rectangle().top_left(), Point::new(100.0, 200.0));
+        assert_eq!(duplicated.rectangle().size(), rectangle_at(0.0, 0.0).size());
+        assert_eq!(duplicated.color(), color);
+        assert_eq!(duplicated.rotation_degrees(), 35.0);
     }
 
     #[test]

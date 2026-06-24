@@ -27,8 +27,18 @@ pub fn handle_event(
             handle_left_release(editor, state, cursor_in_bounds, cursor_from_canvas)
         }
         iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
-            let cursor = cursor.position_in(bounds)?;
-            handle_cursor_moved(editor, state, cursor)
+            let Some(cursor) = cursor.position_in(bounds) else {
+                return Some(Action::publish(Message::CanvasCursorChanged(None)));
+            };
+
+            handle_cursor_moved(editor, state, cursor).or_else(|| {
+                Some(Action::publish(Message::CanvasCursorChanged(Some(
+                    editor.camera().screen_to_world(cursor),
+                ))))
+            })
+        }
+        iced::Event::Mouse(iced::mouse::Event::CursorLeft) => {
+            Some(Action::publish(Message::CanvasCursorChanged(None)))
         }
         iced::Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) => {
             let cursor = cursor.position_in(bounds)?;
@@ -47,6 +57,11 @@ pub fn handle_event(
 }
 
 fn handle_left_press(editor: &MapEditor, state: &mut CanvasState, cursor: Point) {
+    if let Some(id) = rotation_handle_at(editor, cursor) {
+        state.drag = DragState::RotatingObject { id };
+        return;
+    }
+
     match editor.selected_tool() {
         Tool::Select => {}
         Tool::Draw | Tool::DrawDelimiter => {
@@ -59,8 +74,8 @@ fn handle_left_press(editor: &MapEditor, state: &mut CanvasState, cursor: Point)
         Tool::Grab => {
             let world_cursor = editor.camera().screen_to_world(cursor);
 
-            state.drag = if let Some(id) = editor.cemetery().grave_at(world_cursor) {
-                DragState::MovingGrave {
+            state.drag = if let Some(id) = editor.object_at(world_cursor) {
+                DragState::MovingObject {
                     id,
                     previous_cursor: cursor,
                 }
@@ -111,7 +126,7 @@ fn handle_left_release(
         DragState::Panning { .. } => {
             return None;
         }
-        DragState::MovingGrave { .. } => {
+        DragState::MovingObject { .. } | DragState::RotatingObject { .. } => {
             return Some(Action::publish(Message::CommitPendingChanges));
         }
         DragState::None => {}
@@ -155,6 +170,16 @@ fn handle_cursor_moved(
     state: &mut CanvasState,
     cursor: Point,
 ) -> Option<canvas::Action<Message>> {
+    if let DragState::RotatingObject { id } = state.drag {
+        let world_cursor = editor.camera().screen_to_world(cursor);
+        let rotation_degrees = editor.rotation_degrees_for_cursor(id, world_cursor)?;
+
+        return Some(Action::publish(Message::RotateMapObject {
+            id,
+            rotation_degrees,
+        }));
+    }
+
     match editor.selected_tool() {
         Tool::Select => {}
         Tool::Draw | Tool::DrawDelimiter => {
@@ -169,19 +194,19 @@ fn handle_cursor_moved(
         }
         Tool::StampGrave => {}
         Tool::Grab => match state.drag {
-            DragState::MovingGrave {
+            DragState::MovingObject {
                 id,
                 previous_cursor,
             } => {
                 let delta = cursor - previous_cursor;
                 let world_delta = editor.camera().canvas_delta_to_world(delta);
 
-                state.drag = DragState::MovingGrave {
+                state.drag = DragState::MovingObject {
                     id,
                     previous_cursor: cursor,
                 };
 
-                return Some(Action::publish(Message::MoveGrave {
+                return Some(Action::publish(Message::MoveMapObject {
                     id,
                     delta: world_delta,
                 }));
@@ -195,12 +220,28 @@ fn handle_cursor_moved(
 
                 return Some(Action::publish(Message::PanCamera(delta)));
             }
-            DragState::None | DragState::Drawing { .. } => {}
+            DragState::None | DragState::Drawing { .. } | DragState::RotatingObject { .. } => {}
         },
         Tool::Erase => {}
     }
 
     None
+}
+
+fn rotation_handle_at(editor: &MapEditor, cursor: Point) -> Option<super::map_editor::MapObjectId> {
+    const HIT_RADIUS: f32 = 10.0;
+
+    editor.rotation_targets().into_iter().rev().find(|id| {
+        let Some(handle) = editor
+            .rotation_handle_position(*id)
+            .map(|point| editor.camera().world_to_screen(point))
+        else {
+            return false;
+        };
+        let delta = cursor - handle;
+
+        delta.x.hypot(delta.y) <= HIT_RADIUS
+    })
 }
 
 #[cfg(test)]

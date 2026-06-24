@@ -77,6 +77,8 @@ tool-grid = Toggle grid
 tool-erase = Erase grave or delimiter
 tool-grave-color = Drawing color
 tool-color-swatch = Select this color
+tool-edit = Edit
+tool-duplicate-last-grave = Duplicate last grave
 
 file-filter-sqlite-cemetery = SQLite cemetery
 file-filter-pdf = PDF document

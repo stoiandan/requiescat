@@ -1,6 +1,6 @@
 use iced::{Point, Size};
 
-use crate::models::{Cemetery, GraveRectangle};
+use crate::models::Cemetery;
 
 const A0_LANDSCAPE_WIDTH: f32 = 3370.39;
 const A0_LANDSCAPE_HEIGHT: f32 = 2383.94;
@@ -50,43 +50,39 @@ pub(super) struct CemeteryBounds {
 
 impl CemeteryBounds {
     pub(super) fn from_cemetery(cemetery: &Cemetery) -> Option<Self> {
-        let mut rectangles = cemetery
+        let mut points = cemetery
             .graves()
             .iter()
-            .map(|grave| grave.rectangle())
-            .chain(
-                cemetery
-                    .delimiters()
-                    .iter()
-                    .map(|delimiter| delimiter.rectangle()),
-            );
-        let first = rectangles.next()?;
+            .flat_map(|grave| {
+                grave
+                    .rectangle()
+                    .corners_rotated(grave.rotation_degrees())
+                    .into_iter()
+            })
+            .chain(cemetery.delimiters().iter().flat_map(|delimiter| {
+                delimiter
+                    .rectangle()
+                    .corners_rotated(delimiter.rotation_degrees())
+                    .into_iter()
+            }));
+        let first = points.next()?;
         let mut bounds = Self {
-            min: first.top_left(),
-            max: Point::new(
-                first.top_left().x + first.size().width,
-                first.top_left().y + first.size().height,
-            ),
+            min: first,
+            max: first,
         };
 
-        for rectangle in rectangles {
-            bounds.include(rectangle);
+        for point in points {
+            bounds.include(point);
         }
 
         Some(bounds.with_padding())
     }
 
-    fn include(&mut self, rectangle: GraveRectangle) {
-        self.min.x = self.min.x.min(rectangle.top_left().x);
-        self.min.y = self.min.y.min(rectangle.top_left().y);
-        self.max.x = self
-            .max
-            .x
-            .max(rectangle.top_left().x + rectangle.size().width);
-        self.max.y = self
-            .max
-            .y
-            .max(rectangle.top_left().y + rectangle.size().height);
+    fn include(&mut self, point: Point) {
+        self.min.x = self.min.x.min(point.x);
+        self.min.y = self.min.y.min(point.y);
+        self.max.x = self.max.x.max(point.x);
+        self.max.y = self.max.y.max(point.y);
     }
 
     fn with_padding(mut self) -> Self {
