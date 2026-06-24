@@ -140,9 +140,6 @@ impl MapEditor {
                 let previous_show_grid = self.toolbar.show_grid();
                 let previous_rotation_targets = self.rotation_targets();
                 self.toolbar.update(action);
-                if action == ToolbarAction::DuplicateLastGrave {
-                    return self.duplicate_last_grave_at_cursor();
-                }
                 if self.toolbar.show_grid() != previous_show_grid
                     || self.rotation_targets() != previous_rotation_targets
                 {
@@ -232,14 +229,30 @@ impl MapEditor {
                 self.invalidate_map();
                 UpdateOutcome::Changed
             }
-            Message::UpdatePersonFirstName(id, value) => self.update_person_first_name(id, value),
-            Message::UpdatePersonLastName(id, value) => self.update_person_last_name(id, value),
-            Message::UpdatePersonDateOfBirth(id, value) => {
-                self.update_person_date_of_birth(id, value)
-            }
-            Message::UpdatePersonDateOfDecease(id, value) => {
-                self.update_person_date_of_decease(id, value)
-            }
+            Message::UpdatePersonFirstName(id, value) => self.update_person_draft(
+                id,
+                value,
+                PersonEditDraft::with_first_name,
+                Person::with_first_name,
+            ),
+            Message::UpdatePersonLastName(id, value) => self.update_person_draft(
+                id,
+                value,
+                PersonEditDraft::with_last_name,
+                Person::with_last_name,
+            ),
+            Message::UpdatePersonDateOfBirth(id, value) => self.update_person_draft(
+                id,
+                value,
+                PersonEditDraft::with_date_of_birth,
+                Person::with_date_of_birth,
+            ),
+            Message::UpdatePersonDateOfDecease(id, value) => self.update_person_draft(
+                id,
+                value,
+                PersonEditDraft::with_date_of_decease,
+                Person::with_date_of_decease,
+            ),
             Message::CommitPendingChanges => UpdateOutcome::Commit,
         }
     }
@@ -263,13 +276,9 @@ impl MapEditor {
             map_row = map_row.push(self.side_panel(localizer, grave_id));
         }
 
-        let mut footer = row![
-            self.toolbar
-                .view(localizer, self.can_duplicate_last_grave())
-                .map(Message::ToolBarAction)
-        ]
-        .spacing(8)
-        .padding([8, 12]);
+        let mut footer = row![self.toolbar.view(localizer).map(Message::ToolBarAction)]
+            .spacing(8)
+            .padding([8, 12]);
 
         if let Some(status) = save_status {
             footer = footer.push(
@@ -614,40 +623,22 @@ impl MapEditor {
         &self.cemetery
     }
 
-    fn update_person_first_name(&mut self, id: PersonId, value: String) -> UpdateOutcome {
-        self.person_edits.entry(id).or_default().first_name = Some(value.clone());
-        if value.trim().is_empty() {
-            return UpdateOutcome::Unchanged;
-        }
+    fn update_person_draft<Value>(
+        &mut self,
+        id: PersonId,
+        value: String,
+        draft_update: impl FnOnce(PersonEditDraft, String) -> (PersonEditDraft, Option<Value>),
+        person_update: impl FnOnce(Person, Value) -> Person,
+    ) -> UpdateOutcome {
+        let draft = self.person_edits.remove(&id).unwrap_or_default();
+        let (draft, parsed) = draft_update(draft, value);
+        self.person_edits.insert(id, draft);
 
-        self.update_person(id, |person| person.with_first_name(value))
-    }
-
-    fn update_person_last_name(&mut self, id: PersonId, value: String) -> UpdateOutcome {
-        self.person_edits.entry(id).or_default().last_name = Some(value.clone());
-        if value.trim().is_empty() {
-            return UpdateOutcome::Unchanged;
-        }
-
-        self.update_person(id, |person| person.with_last_name(value))
-    }
-
-    fn update_person_date_of_birth(&mut self, id: PersonId, value: String) -> UpdateOutcome {
-        self.person_edits.entry(id).or_default().date_of_birth = Some(value.clone());
-        let Ok(date) = PersonDate::parse(&value) else {
+        let Some(parsed) = parsed else {
             return UpdateOutcome::Unchanged;
         };
 
-        self.update_person(id, |person| person.with_date_of_birth(date))
-    }
-
-    fn update_person_date_of_decease(&mut self, id: PersonId, value: String) -> UpdateOutcome {
-        self.person_edits.entry(id).or_default().date_of_decease = Some(value.clone());
-        let Some(date) = parse_optional_person_date(&value) else {
-            return UpdateOutcome::Unchanged;
-        };
-
-        self.update_person(id, |person| person.with_date_of_decease(date))
+        self.update_person(id, |person| person_update(person, parsed))
     }
 
     fn update_person(
@@ -765,10 +756,6 @@ impl MapEditor {
 
     fn remember_created_grave(&mut self, id: GraveId) {
         self.last_created_grave = Some(id);
-    }
-
-    fn can_duplicate_last_grave(&self) -> bool {
-        self.last_created_grave().is_some()
     }
 
     fn last_created_grave(&self) -> Option<crate::models::Grave> {
@@ -910,6 +897,52 @@ impl NewPersonDraft {
             date_of_birth,
             date_of_decease,
         })
+    }
+}
+
+impl PersonEditDraft {
+    fn with_first_name(self, value: String) -> (Self, Option<String>) {
+        let parsed = (!value.trim().is_empty()).then(|| value.clone());
+        (
+            Self {
+                first_name: Some(value),
+                ..self
+            },
+            parsed,
+        )
+    }
+
+    fn with_last_name(self, value: String) -> (Self, Option<String>) {
+        let parsed = (!value.trim().is_empty()).then(|| value.clone());
+        (
+            Self {
+                last_name: Some(value),
+                ..self
+            },
+            parsed,
+        )
+    }
+
+    fn with_date_of_birth(self, value: String) -> (Self, Option<PersonDate>) {
+        let parsed = PersonDate::parse(&value).ok();
+        (
+            Self {
+                date_of_birth: Some(value),
+                ..self
+            },
+            parsed,
+        )
+    }
+
+    fn with_date_of_decease(self, value: String) -> (Self, Option<Option<PersonDate>>) {
+        let parsed = parse_optional_person_date(&value);
+        (
+            Self {
+                date_of_decease: Some(value),
+                ..self
+            },
+            parsed,
+        )
     }
 }
 
@@ -1131,14 +1164,14 @@ mod tests {
     fn duplicate_last_grave_requires_a_created_grave_and_canvas_cursor() {
         let mut editor = MapEditor::default();
 
-        assert!(!editor.can_duplicate_last_grave());
+        assert!(editor.last_created_grave().is_none());
         assert_eq!(
             editor.update(Message::DuplicateLastGraveAtCursor),
             UpdateOutcome::Unchanged
         );
 
         editor.update(Message::CreateGrave(rectangle_at(0.0, 0.0)));
-        assert!(editor.can_duplicate_last_grave());
+        assert!(editor.last_created_grave().is_some());
         assert_eq!(
             editor.update(Message::DuplicateLastGraveAtCursor),
             UpdateOutcome::Unchanged

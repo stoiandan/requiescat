@@ -1,10 +1,12 @@
 language-name = English
 language-menu = Language
 app-menu-file = File
+app-menu-edit = Edit
 app-menu-view = View
 app-menu-new-person = New person
 app-menu-export-db = Export DB
 app-menu-export-pdf = Export to PDF
+app-menu-duplicate-last-grave = Duplicate last grave
 app-menu-person-directory = Person directory
 
 unsaved-changes = Unsaved changes
@@ -77,8 +79,6 @@ tool-grid = Toggle grid
 tool-erase = Erase grave or delimiter
 tool-grave-color = Drawing color
 tool-color-swatch = Select this color
-tool-edit = Edit
-tool-duplicate-last-grave = Duplicate last grave
 
 file-filter-sqlite-cemetery = SQLite cemetery
 file-filter-pdf = PDF document

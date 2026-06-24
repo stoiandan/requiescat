@@ -6,6 +6,7 @@ use iced::{Point, Rectangle, Vector};
 use super::Camera;
 use super::map_canvas::CanvasState;
 use super::map_editor::MapEditor;
+use crate::label_layout;
 use crate::models::{Cemetery, GraveId, GraveRectangle};
 
 pub fn grid(frame: &mut canvas::Frame, camera: &Camera, bounds: Rectangle) {
@@ -235,9 +236,9 @@ fn grave_labels(
         return;
     }
 
-    let rows = visible_label_rows(rows, fallback, max_rows);
+    let rows = label_layout::visible_rows(rows, fallback, max_rows);
     let max_width = (size.width - PADDING * 2.0).max(0.0);
-    let max_characters = label_character_capacity(max_width, font_size);
+    let max_characters = label_layout::character_capacity(max_width, font_size);
 
     frame.with_save(|frame| {
         frame.translate(Vector::new(center.x, center.y));
@@ -245,7 +246,7 @@ fn grave_labels(
         frame.translate(Vector::new(-center.x, -center.y));
 
         for (index, row) in rows.into_iter().enumerate() {
-            let row = truncate_label(&row, max_characters);
+            let row = label_layout::truncate(&row, max_characters);
             if row.is_empty() {
                 continue;
             }
@@ -271,14 +272,6 @@ fn label_font_size(screen_width: f32) -> f32 {
     (screen_width / 8.5).clamp(9.0, 13.0)
 }
 
-fn label_character_capacity(available_width: f32, font_size: f32) -> usize {
-    const APPROX_CHARACTER_WIDTH_RATIO: f32 = 0.52;
-
-    (available_width / (font_size * APPROX_CHARACTER_WIDTH_RATIO))
-        .floor()
-        .max(0.0) as usize
-}
-
 fn grave_labels_by_grave(
     cemetery: &Cemetery,
     visible_grave_ids: &HashSet<GraveId>,
@@ -300,95 +293,13 @@ fn grave_labels_by_grave(
     labels
 }
 
-fn visible_label_rows(rows: &[String], fallback: &str, max_rows: usize) -> Vec<String> {
-    if max_rows == 0 {
-        return Vec::new();
-    }
-
-    if rows.is_empty() {
-        return vec![fallback.to_owned()];
-    }
-
-    if rows.len() <= max_rows {
-        return rows.to_vec();
-    }
-
-    if max_rows == 1 {
-        return vec!["...".to_owned()];
-    }
-
-    rows.iter()
-        .take(max_rows - 1)
-        .cloned()
-        .chain(std::iter::once("...".to_owned()))
-        .collect()
-}
-
-fn truncate_label(label: &str, max_characters: usize) -> String {
-    if label.chars().count() <= max_characters {
-        return label.to_owned();
-    }
-
-    if max_characters <= 3 {
-        return String::new();
-    }
-
-    let mut truncated = label.chars().take(max_characters - 3).collect::<String>();
-    truncated.push_str("...");
-    truncated
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn rows(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
-
-    #[test]
-    fn visible_label_rows_uses_fallback_when_grave_has_no_people() {
-        assert_eq!(
-            visible_label_rows(&Vec::new(), "grave 1", 2),
-            rows(&["grave 1"])
-        );
-    }
-
-    #[test]
-    fn visible_label_rows_keeps_all_people_that_fit() {
-        assert_eq!(
-            visible_label_rows(&rows(&["Dan Stoian", "Maria Boto"]), "grave 1", 2),
-            rows(&["Dan Stoian", "Maria Boto"])
-        );
-    }
-
-    #[test]
-    fn visible_label_rows_reserves_last_row_for_overflow_marker() {
-        assert_eq!(
-            visible_label_rows(
-                &rows(&["Dan Stoian", "Maria Boto", "Ada Lovelace"]),
-                "grave 1",
-                2
-            ),
-            rows(&["Dan Stoian", "..."])
-        );
-    }
 
     #[test]
     fn label_font_size_is_clamped_to_avoid_zoom_jumps() {
         assert_eq!(label_font_size(20.0), 9.0);
         assert_eq!(label_font_size(500.0), 13.0);
-    }
-
-    #[test]
-    fn label_character_capacity_expands_with_available_width() {
-        assert_eq!(label_character_capacity(46.8, 9.0), 10);
-        assert_eq!(label_character_capacity(93.6, 9.0), 20);
-    }
-
-    #[test]
-    fn truncate_label_uses_character_capacity() {
-        assert_eq!(truncate_label("Dan Stoian", 20), "Dan Stoian");
-        assert_eq!(truncate_label("Dan Stoian", 6), "Dan...");
     }
 }

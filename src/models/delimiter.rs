@@ -1,4 +1,5 @@
 use iced::{Point, Vector};
+use std::str::FromStr;
 
 use super::grave::normalize_rotation;
 use super::{DelimiterId, GraveColor, GraveRectangle};
@@ -19,7 +20,7 @@ impl DelimiterType {
         }
     }
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    fn from_storage_value(value: &str) -> Option<Self> {
         match value {
             "wall" => Some(Self::Wall),
             "road" => Some(Self::Road),
@@ -31,6 +32,14 @@ impl DelimiterType {
 impl Default for DelimiterType {
     fn default() -> Self {
         Self::DEFAULT
+    }
+}
+
+impl FromStr for DelimiterType {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::from_storage_value(value).ok_or(())
     }
 }
 

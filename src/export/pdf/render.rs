@@ -7,6 +7,7 @@ use super::content::PdfContent;
 use super::delimiter_rendering;
 use super::layout::{CemeteryBounds, MapTransform, PageLayout, grid_interval};
 use super::map_geometry::PdfRectangle;
+use crate::label_layout;
 use crate::models::{Cemetery, GraveColor, GraveId};
 
 pub(super) fn header(content: &mut PdfContent, options: &PdfExportOptions, layout: PageLayout) {
@@ -152,16 +153,14 @@ fn render_grave_label(
         return;
     }
 
-    let rows = visible_label_rows(rows, fallback, max_rows);
-    let max_characters = ((width - PADDING * 2.0) / (font_size * 0.52))
-        .floor()
-        .max(0.0) as usize;
+    let rows = label_layout::visible_rows(rows, fallback, max_rows);
+    let max_characters = label_layout::character_capacity(width - PADDING * 2.0, font_size);
     let total_height = rows.len() as f32 * row_height;
     let first_baseline = y + height / 2.0 + total_height / 2.0 - font_size;
 
     content.fill_color(1.0, 1.0, 1.0);
     for (index, row) in rows.into_iter().enumerate() {
-        let row = truncate_label(&row, max_characters);
+        let row = label_layout::truncate(&row, max_characters);
         if row.is_empty() {
             continue;
         }
@@ -188,46 +187,6 @@ fn labels_by_grave(cemetery: &Cemetery) -> HashMap<GraveId, Vec<String>> {
     }
 
     labels
-}
-
-fn visible_label_rows(rows: &[String], fallback: &str, max_rows: usize) -> Vec<String> {
-    if rows.is_empty() {
-        return vec![fallback.to_owned()];
-    }
-
-    if rows.len() <= max_rows {
-        return rows.to_vec();
-    }
-
-    if max_rows == 1 {
-        return vec!["...".to_owned()];
-    }
-
-    rows.iter()
-        .take(max_rows - 1)
-        .cloned()
-        .chain(std::iter::once("...".to_owned()))
-        .collect()
-}
-
-fn truncate_label(value: &str, max_characters: usize) -> String {
-    if max_characters == 0 {
-        return String::new();
-    }
-
-    let mut characters = value.chars();
-    let truncated = characters.by_ref().take(max_characters).collect::<String>();
-    if characters.next().is_some() && max_characters > 3 {
-        format!(
-            "{}...",
-            truncated
-                .chars()
-                .take(max_characters - 3)
-                .collect::<String>()
-        )
-    } else {
-        truncated
-    }
 }
 
 fn rgb(color: GraveColor) -> (f32, f32, f32) {

@@ -1,10 +1,12 @@
 language-name = Română
 language-menu = Limbă
 app-menu-file = Fișier
+app-menu-edit = Editare
 app-menu-view = Vizualizare
 app-menu-new-person = Persoană nouă
 app-menu-export-db = Exportă BD
 app-menu-export-pdf = Exportă PDF
+app-menu-duplicate-last-grave = Duplică ultimul mormânt
 app-menu-person-directory = Directorul persoanelor
 
 unsaved-changes = Modificări nesalvate
@@ -77,8 +79,6 @@ tool-grid = Arată/ascunde axele
 tool-erase = Șterge mormântul sau delimitatorul
 tool-grave-color = Culoarea desenului
 tool-color-swatch = Alege culoarea
-tool-edit = Editare
-tool-duplicate-last-grave = Duplică ultimul mormânt
 
 file-filter-sqlite-cemetery = Cimitir SQLite
 file-filter-pdf = Document PDF

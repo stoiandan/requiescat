@@ -15,7 +15,7 @@ const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 pub trait CemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError>;
-    fn save(&mut self, cemetery: &Cemetery) -> Result<(), PersistenceError>;
+    fn save(&self, cemetery: &Cemetery) -> Result<(), PersistenceError>;
 }
 
 #[derive(Debug)]
@@ -111,7 +111,7 @@ impl CemeteryLibrary {
     pub fn create(&self, name: &str) -> Result<PathBuf, PersistenceError> {
         let file_name = cemetery_file_name(name)?;
         let destination = unique_destination(&self.directory, &file_name);
-        let mut repository = SqliteCemeteryRepository::new(destination.clone());
+        let repository = SqliteCemeteryRepository::new(destination.clone());
         repository.save(&Cemetery::default())?;
         Ok(destination)
     }
@@ -185,90 +185,14 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         }
         validate_current_schema(&connection)?;
 
-        let graves = {
-            let mut statement = connection.prepare(
-                "
-                SELECT id, x, y, width, height, color, rotation_degrees, gps
-                FROM graves
-                ORDER BY id
-                ",
-            )?;
-            let rows = statement.query_map([], |row| {
-                Ok(GraveRow {
-                    id: row.get(0)?,
-                    x: row.get(1)?,
-                    y: row.get(2)?,
-                    width: row.get(3)?,
-                    height: row.get(4)?,
-                    color: row.get(5)?,
-                    rotation_degrees: row.get(6)?,
-                    gps: row.get(7)?,
-                })
-            })?;
-
-            rows.collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(Grave::try_from)
-                .collect::<Result<Vec<_>, _>>()?
-        };
-
-        let delimiters = {
-            let mut statement = connection.prepare(
-                "
-                SELECT id, x, y, width, height, color, type, rotation_degrees
-                FROM delimiters
-                ORDER BY id
-                ",
-            )?;
-            let rows = statement.query_map([], |row| {
-                Ok(DelimiterRow {
-                    id: row.get(0)?,
-                    x: row.get(1)?,
-                    y: row.get(2)?,
-                    width: row.get(3)?,
-                    height: row.get(4)?,
-                    color: row.get(5)?,
-                    delimiter_type: row.get(6)?,
-                    rotation_degrees: row.get(7)?,
-                })
-            })?;
-
-            rows.collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(Delimiter::try_from)
-                .collect::<Result<Vec<_>, _>>()?
-        };
-
-        let people = {
-            let mut statement = connection.prepare(
-                "
-                SELECT id, first_name, last_name, date_of_birth,
-                       COALESCE(date_of_decease, ''), grave_id
-                FROM persons
-                ORDER BY id
-                ",
-            )?;
-            let rows = statement.query_map([], |row| {
-                Ok(PersonRow {
-                    id: row.get(0)?,
-                    first_name: row.get(1)?,
-                    last_name: row.get(2)?,
-                    date_of_birth: row.get(3)?,
-                    date_of_decease: row.get(4)?,
-                    grave_id: row.get(5)?,
-                })
-            })?;
-
-            rows.collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(Person::try_from)
-                .collect::<Result<Vec<_>, _>>()?
-        };
-
-        Ok(Cemetery::from_records(graves, delimiters, people))
+        Ok(Cemetery::from_records(
+            load_graves(&connection)?,
+            load_delimiters(&connection)?,
+            load_people(&connection)?,
+        ))
     }
 
-    fn save(&mut self, cemetery: &Cemetery) -> Result<(), PersistenceError> {
+    fn save(&self, cemetery: &Cemetery) -> Result<(), PersistenceError> {
         let mut connection = self.writable_connection()?;
         validate_current_schema(&connection)?;
         let transaction = connection.transaction()?;
@@ -277,79 +201,178 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         transaction.execute("DELETE FROM graves", [])?;
         transaction.execute("DELETE FROM delimiters", [])?;
 
-        {
-            let mut statement = transaction.prepare(
-                "
-                INSERT INTO graves (id, x, y, width, height, color, rotation_degrees, gps)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                ",
-            )?;
-
-            for grave in cemetery.graves().iter().copied() {
-                let row = GraveRow::from(grave);
-                statement.execute(params![
-                    row.id,
-                    row.x,
-                    row.y,
-                    row.width,
-                    row.height,
-                    row.color,
-                    row.rotation_degrees,
-                    row.gps
-                ])?;
-            }
-        }
-
-        {
-            let mut statement = transaction.prepare(
-                "
-                INSERT INTO delimiters (id, x, y, width, height, color, type, rotation_degrees)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                ",
-            )?;
-
-            for delimiter in cemetery.delimiters().iter().copied() {
-                let row = DelimiterRow::from(delimiter);
-                statement.execute(params![
-                    row.id,
-                    row.x,
-                    row.y,
-                    row.width,
-                    row.height,
-                    row.color,
-                    row.delimiter_type,
-                    row.rotation_degrees
-                ])?;
-            }
-        }
-
-        {
-            let mut statement = transaction.prepare(
-                "
-                INSERT INTO persons (
-                    id, first_name, last_name, date_of_birth, date_of_decease, grave_id
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                ",
-            )?;
-
-            for person in cemetery.people() {
-                let row = PersonRow::from(person.clone());
-                let date_of_decease =
-                    (!row.date_of_decease.is_empty()).then_some(row.date_of_decease.as_str());
-                statement.execute(params![
-                    row.id,
-                    row.first_name,
-                    row.last_name,
-                    row.date_of_birth,
-                    date_of_decease,
-                    row.grave_id
-                ])?;
-            }
-        }
+        insert_graves(&transaction, cemetery)?;
+        insert_delimiters(&transaction, cemetery)?;
+        insert_people(&transaction, cemetery)?;
 
         transaction.commit()?;
         Ok(())
     }
+}
+
+fn load_graves(connection: &Connection) -> Result<Vec<Grave>, PersistenceError> {
+    let mut statement = connection.prepare(
+        "
+        SELECT id, x, y, width, height, color, rotation_degrees, gps
+        FROM graves
+        ORDER BY id
+        ",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(GraveRow {
+            id: row.get(0)?,
+            x: row.get(1)?,
+            y: row.get(2)?,
+            width: row.get(3)?,
+            height: row.get(4)?,
+            color: row.get(5)?,
+            rotation_degrees: row.get(6)?,
+            gps: row.get(7)?,
+        })
+    })?;
+
+    rows.collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(Grave::try_from)
+        .collect()
+}
+
+fn load_delimiters(connection: &Connection) -> Result<Vec<Delimiter>, PersistenceError> {
+    let mut statement = connection.prepare(
+        "
+        SELECT id, x, y, width, height, color, type, rotation_degrees
+        FROM delimiters
+        ORDER BY id
+        ",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(DelimiterRow {
+            id: row.get(0)?,
+            x: row.get(1)?,
+            y: row.get(2)?,
+            width: row.get(3)?,
+            height: row.get(4)?,
+            color: row.get(5)?,
+            delimiter_type: row.get(6)?,
+            rotation_degrees: row.get(7)?,
+        })
+    })?;
+
+    rows.collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(Delimiter::try_from)
+        .collect()
+}
+
+fn load_people(connection: &Connection) -> Result<Vec<Person>, PersistenceError> {
+    let mut statement = connection.prepare(
+        "
+        SELECT id, first_name, last_name, date_of_birth,
+               COALESCE(date_of_decease, ''), grave_id
+        FROM persons
+        ORDER BY id
+        ",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(PersonRow {
+            id: row.get(0)?,
+            first_name: row.get(1)?,
+            last_name: row.get(2)?,
+            date_of_birth: row.get(3)?,
+            date_of_decease: row.get(4)?,
+            grave_id: row.get(5)?,
+        })
+    })?;
+
+    rows.collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(Person::try_from)
+        .collect()
+}
+
+fn insert_graves(
+    transaction: &rusqlite::Transaction<'_>,
+    cemetery: &Cemetery,
+) -> Result<(), PersistenceError> {
+    let mut statement = transaction.prepare(
+        "
+        INSERT INTO graves (id, x, y, width, height, color, rotation_degrees, gps)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ",
+    )?;
+
+    for grave in cemetery.graves().iter().copied() {
+        let row = GraveRow::from(grave);
+        statement.execute(params![
+            row.id,
+            row.x,
+            row.y,
+            row.width,
+            row.height,
+            row.color,
+            row.rotation_degrees,
+            row.gps
+        ])?;
+    }
+
+    Ok(())
+}
+
+fn insert_delimiters(
+    transaction: &rusqlite::Transaction<'_>,
+    cemetery: &Cemetery,
+) -> Result<(), PersistenceError> {
+    let mut statement = transaction.prepare(
+        "
+        INSERT INTO delimiters (id, x, y, width, height, color, type, rotation_degrees)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ",
+    )?;
+
+    for delimiter in cemetery.delimiters().iter().copied() {
+        let row = DelimiterRow::from(delimiter);
+        statement.execute(params![
+            row.id,
+            row.x,
+            row.y,
+            row.width,
+            row.height,
+            row.color,
+            row.delimiter_type,
+            row.rotation_degrees
+        ])?;
+    }
+
+    Ok(())
+}
+
+fn insert_people(
+    transaction: &rusqlite::Transaction<'_>,
+    cemetery: &Cemetery,
+) -> Result<(), PersistenceError> {
+    let mut statement = transaction.prepare(
+        "
+        INSERT INTO persons (
+            id, first_name, last_name, date_of_birth, date_of_decease, grave_id
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        ",
+    )?;
+
+    for person in cemetery.people() {
+        let row = PersonRow::from(person);
+        let date_of_decease =
+            (!row.date_of_decease.is_empty()).then_some(row.date_of_decease.as_str());
+        statement.execute(params![
+            row.id,
+            row.first_name,
+            row.last_name,
+            row.date_of_birth,
+            date_of_decease,
+            row.grave_id
+        ])?;
+    }
+
+    Ok(())
 }
 
 fn configure_connection(connection: &Connection) -> Result<(), PersistenceError> {
@@ -663,7 +686,7 @@ impl TryFrom<DelimiterRow> for Delimiter {
     type Error = PersistenceError;
 
     fn try_from(row: DelimiterRow) -> Result<Self, Self::Error> {
-        let delimiter_type = DelimiterType::from_str(&row.delimiter_type).ok_or_else(|| {
+        let delimiter_type = row.delimiter_type.parse::<DelimiterType>().map_err(|_| {
             PersistenceError::InvalidData(format!(
                 "Delimiter {} has invalid type: {}",
                 row.id, row.delimiter_type
@@ -732,8 +755,8 @@ impl TryFrom<GraveRow> for Grave {
     }
 }
 
-impl From<Person> for PersonRow {
-    fn from(person: Person) -> Self {
+impl From<&Person> for PersonRow {
+    fn from(person: &Person) -> Self {
         Self {
             id: person.id().value(),
             first_name: person.first_name().to_owned(),
@@ -1185,7 +1208,7 @@ mod tests {
             Some(grave_id),
         );
 
-        let mut repository = SqliteCemeteryRepository::new(path.clone());
+        let repository = SqliteCemeteryRepository::new(path.clone());
         repository.save(&cemetery).unwrap();
         let mut loaded = repository.load().unwrap();
 

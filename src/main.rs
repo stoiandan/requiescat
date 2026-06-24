@@ -9,7 +9,7 @@ use iced::{
 };
 use requiescat::export::pdf::{PdfExportOptions, export_cemetery_map};
 use requiescat::localization::{Language, Localizer, MessageId};
-use requiescat::models::Cemetery;
+use requiescat::models::{Cemetery, PersonId};
 use requiescat::persistence::{
     CemeteryFile, CemeteryLibrary, CemeteryRepository, PersistenceError, SqliteCemeteryRepository,
 };
@@ -34,7 +34,7 @@ fn main() -> iced::Result {
 enum Message {
     MainWindowOpened(window::Id),
     PersonDirectoryOpened(window::Id),
-    PersonDetailsOpened(window::Id, requiescat::models::PersonId),
+    PersonDetailsOpened(window::Id, PersonId),
     NewPersonWindowOpened(window::Id),
     WindowClosed(window::Id),
     Keyboard(keyboard::Event),
@@ -42,6 +42,7 @@ enum Message {
     ToggleAppMenu(AppMenu),
     NewPerson,
     OpenPersonDirectory,
+    DuplicateLastGrave,
     ExportActiveCemetery,
     ExportActiveCemeteryPdf,
     StartMenu(StartMenuMessage),
@@ -64,7 +65,77 @@ enum MainScreen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppMenu {
     File,
+    Edit,
     View,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OpenWindows {
+    main: Option<window::Id>,
+    person_directory: Option<window::Id>,
+    person_details: Vec<(window::Id, PersonId)>,
+    new_person: Option<window::Id>,
+}
+
+impl OpenWindows {
+    fn with_main(main: window::Id) -> Self {
+        Self {
+            main: Some(main),
+            ..Default::default()
+        }
+    }
+
+    fn is_main(&self, id: window::Id) -> bool {
+        self.main == Some(id)
+    }
+
+    fn with_person_details(&self, id: window::Id, person_id: PersonId) -> Self {
+        if self
+            .person_details
+            .iter()
+            .any(|(window_id, _)| *window_id == id)
+        {
+            return self.clone();
+        }
+
+        Self {
+            person_details: self
+                .person_details
+                .iter()
+                .copied()
+                .chain(std::iter::once((id, person_id)))
+                .collect(),
+            ..self.clone()
+        }
+    }
+
+    fn person_detail_for_window(&self, id: window::Id) -> Option<PersonId> {
+        self.person_details
+            .iter()
+            .find(|(window_id, _)| *window_id == id)
+            .map(|(_, person_id)| *person_id)
+    }
+
+    fn window_for_person(&self, person_id: PersonId) -> Option<window::Id> {
+        self.person_details
+            .iter()
+            .find(|(_, open_person_id)| *open_person_id == person_id)
+            .map(|(window_id, _)| *window_id)
+    }
+
+    fn without_window(&self, id: window::Id) -> Self {
+        Self {
+            person_directory: self.person_directory.filter(|window| *window != id),
+            new_person: self.new_person.filter(|window| *window != id),
+            person_details: self
+                .person_details
+                .iter()
+                .copied()
+                .filter(|(window_id, _)| *window_id != id)
+                .collect(),
+            ..self.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -84,6 +155,129 @@ impl SaveState {
                 Some(localizer.value(MessageId::SaveFailed, "error", error.as_str()))
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CemeterySession {
+    active_database: Option<PathBuf>,
+    save_state: SaveState,
+    save_revision: u64,
+    saved_revision: u64,
+    save_in_flight: bool,
+}
+
+struct SaveRequest {
+    path: PathBuf,
+    cemetery: Cemetery,
+    revision: u64,
+}
+
+impl CemeterySession {
+    fn open(database: PathBuf) -> Self {
+        Self {
+            active_database: Some(database),
+            ..Default::default()
+        }
+    }
+
+    fn active_cemetery_title(&self) -> String {
+        self.active_cemetery_name().unwrap_or("Cemetery").to_owned()
+    }
+
+    fn window_title(&self) -> String {
+        self.active_cemetery_name()
+            .map(|name| format!("{name} - Requiescat"))
+            .unwrap_or_else(|| "Requiescat".to_owned())
+    }
+
+    fn active_cemetery_name(&self) -> Option<&str> {
+        self.active_database
+            .as_deref()
+            .and_then(|path| path.file_stem())
+            .and_then(|name| name.to_str())
+    }
+
+    fn has_unsaved_changes(&self) -> bool {
+        matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_))
+    }
+
+    fn dirty(&self) -> Self {
+        Self {
+            save_revision: self.save_revision.saturating_add(1),
+            save_state: SaveState::Dirty,
+            ..self.clone()
+        }
+    }
+
+    fn save_now(&self, cemetery: &Cemetery) -> (Self, bool) {
+        let Some(path) = self.active_database.clone() else {
+            return (self.clone(), false);
+        };
+
+        let repository = SqliteCemeteryRepository::new(path);
+        match repository.save(cemetery) {
+            Ok(()) => (
+                Self {
+                    save_state: SaveState::Clean,
+                    saved_revision: self.save_revision,
+                    ..self.clone()
+                },
+                true,
+            ),
+            Err(error) => (
+                Self {
+                    save_state: SaveState::Failed(error.to_string()),
+                    ..self.clone()
+                },
+                false,
+            ),
+        }
+    }
+
+    fn begin_background_save(&self, cemetery: &Cemetery) -> Option<(Self, SaveRequest)> {
+        if self.save_in_flight || self.save_revision == self.saved_revision {
+            return None;
+        }
+
+        let path = self.active_database.clone()?;
+        let revision = self.save_revision;
+
+        Some((
+            Self {
+                save_in_flight: true,
+                ..self.clone()
+            },
+            SaveRequest {
+                path,
+                cemetery: cemetery.clone(),
+                revision,
+            },
+        ))
+    }
+
+    fn finish_background_save(&self, revision: u64, result: Result<(), String>) -> (Self, bool) {
+        let session = match result {
+            Ok(()) if self.save_revision == revision => Self {
+                save_in_flight: false,
+                save_state: SaveState::Clean,
+                saved_revision: self.saved_revision.max(revision),
+                ..self.clone()
+            },
+            Ok(()) => Self {
+                save_in_flight: false,
+                saved_revision: self.saved_revision.max(revision),
+                ..self.clone()
+            },
+            Err(error) => Self {
+                save_in_flight: false,
+                save_state: SaveState::Failed(error),
+                ..self.clone()
+            },
+        };
+
+        let needs_follow_up_save = session.save_revision > revision;
+        (session, needs_follow_up_save)
     }
 }
 
@@ -148,23 +342,16 @@ struct Requiescat {
     localizer: Localizer,
     editor: MapEditor,
     main_screen: MainScreen,
-    main_window: Option<window::Id>,
-    person_directory_window: Option<window::Id>,
-    person_detail_windows: Vec<(window::Id, requiescat::models::PersonId)>,
-    new_person_window: Option<window::Id>,
+    windows: OpenWindows,
     library: Option<CemeteryLibrary>,
     cemeteries: Vec<CemeteryFile>,
     selected_cemetery: Option<PathBuf>,
-    active_database: Option<PathBuf>,
+    session: CemeterySession,
     show_cemeteries: bool,
     show_create_cemetery: bool,
     new_cemetery_name: String,
     pending_delete_cemetery: Option<PathBuf>,
     status: Option<AppStatus>,
-    save_state: SaveState,
-    save_revision: u64,
-    saved_revision: u64,
-    save_in_flight: bool,
     app_menu: Option<AppMenu>,
 }
 
@@ -200,23 +387,16 @@ impl Requiescat {
                 localizer: Localizer::default(),
                 editor: MapEditor::default(),
                 main_screen: MainScreen::StartMenu,
-                main_window: Some(window_id),
-                person_directory_window: None,
-                person_detail_windows: Vec::new(),
-                new_person_window: None,
+                windows: OpenWindows::with_main(window_id),
                 library,
                 cemeteries,
                 selected_cemetery: None,
-                active_database: None,
+                session: CemeterySession::default(),
                 show_cemeteries: false,
                 show_create_cemetery: false,
                 new_cemetery_name: String::new(),
                 pending_delete_cemetery: None,
                 status,
-                save_state: SaveState::Clean,
-                save_revision: 0,
-                saved_revision: 0,
-                save_in_flight: false,
                 app_menu: None,
             },
             open.map(Message::MainWindowOpened),
@@ -226,41 +406,26 @@ impl Requiescat {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::MainWindowOpened(id) => {
-                self.main_window = Some(id);
+                self.windows.main = Some(id);
             }
             Message::PersonDirectoryOpened(id) => {
-                self.person_directory_window = Some(id);
+                self.windows.person_directory = Some(id);
             }
             Message::PersonDetailsOpened(id, person_id) => {
-                if !self
-                    .person_detail_windows
-                    .iter()
-                    .any(|(window_id, _)| *window_id == id)
-                {
-                    self.person_detail_windows.push((id, person_id));
-                }
+                self.windows = self.windows.with_person_details(id, person_id);
             }
             Message::NewPersonWindowOpened(id) => {
-                self.new_person_window = Some(id);
+                self.windows.new_person = Some(id);
             }
             Message::WindowClosed(id) => {
-                if Some(id) == self.main_window {
-                    if self.has_unsaved_changes() {
+                if self.windows.is_main(id) {
+                    if self.session.has_unsaved_changes() {
                         self.save_active_cemetery();
                     }
                     return iced::exit();
                 }
 
-                if Some(id) == self.person_directory_window {
-                    self.person_directory_window = None;
-                }
-
-                if Some(id) == self.new_person_window {
-                    self.new_person_window = None;
-                }
-
-                self.person_detail_windows
-                    .retain(|(window_id, _)| *window_id != id);
+                self.windows = self.windows.without_window(id);
             }
             Message::Keyboard(event) => {
                 if !self.is_showing_map_editor() {
@@ -300,6 +465,13 @@ impl Requiescat {
             Message::OpenPersonDirectory => {
                 return self.run_map_editor_menu_action(Self::open_person_directory);
             }
+            Message::DuplicateLastGrave => {
+                return self.run_map_editor_menu_action(|app| {
+                    app.update(Message::Editor(
+                        MapEditorMessage::DuplicateLastGraveAtCursor,
+                    ))
+                });
+            }
             Message::ExportActiveCemetery => {
                 return self
                     .run_map_editor_menu_action(|app| app.prompt_for_database_export_path());
@@ -327,20 +499,11 @@ impl Requiescat {
                 }
             }
             Message::SaveFinished { revision, result } => {
-                self.save_in_flight = false;
-                match result {
-                    Ok(()) => {
-                        self.saved_revision = self.saved_revision.max(revision);
-                        if self.save_revision == revision {
-                            self.save_state = SaveState::Clean;
-                        }
-                    }
-                    Err(error) => {
-                        self.save_state = SaveState::Failed(error);
-                    }
-                }
+                let (session, needs_follow_up_save) =
+                    self.session.finish_background_save(revision, result);
+                self.session = session;
 
-                if self.save_revision > revision {
+                if needs_follow_up_save {
                     return self.save_active_cemetery_in_background();
                 }
             }
@@ -350,7 +513,7 @@ impl Requiescat {
             Message::Editor(MapEditorMessage::SubmitNewPerson) => {
                 if self.editor.submit_new_person() {
                     let save = self.mark_dirty_and_autosave();
-                    if let Some(id) = self.new_person_window.take() {
+                    if let Some(id) = self.windows.new_person.take() {
                         return Task::batch([save, window::close(id)]);
                     }
                     return save;
@@ -362,7 +525,7 @@ impl Requiescat {
                     return self.mark_dirty_and_autosave();
                 }
                 MapEditorUpdateOutcome::DeferredChange => {
-                    self.mark_dirty();
+                    self.session = self.session.dirty();
                 }
                 MapEditorUpdateOutcome::Commit => {
                     return self.save_active_cemetery_in_background();
@@ -374,23 +537,19 @@ impl Requiescat {
     }
 
     fn view(&self, window: window::Id) -> Element<'_, Message> {
-        let content = if Some(window) == self.person_directory_window {
+        let content = if Some(window) == self.windows.person_directory {
             self.editor
                 .person_directory_view(&self.localizer)
                 .map(Message::Editor)
-        } else if Some(window) == self.new_person_window {
+        } else if Some(window) == self.windows.new_person {
             self.editor
                 .new_person_view(&self.localizer)
                 .map(Message::Editor)
-        } else if let Some((_, person_id)) = self
-            .person_detail_windows
-            .iter()
-            .find(|(window_id, _)| *window_id == window)
-        {
+        } else if let Some(person_id) = self.windows.person_detail_for_window(window) {
             self.editor
-                .person_details_view(&self.localizer, *person_id)
+                .person_details_view(&self.localizer, person_id)
                 .map(Message::Editor)
-        } else if Some(window) == self.main_window {
+        } else if self.windows.is_main(window) {
             let status = self
                 .status
                 .as_ref()
@@ -417,7 +576,10 @@ impl Requiescat {
                 .map(Message::StartMenu),
                 MainScreen::MapEditor => self
                     .editor
-                    .view(&self.localizer, self.save_state.label(&self.localizer))
+                    .view(
+                        &self.localizer,
+                        self.session.save_state.label(&self.localizer),
+                    )
                     .map(Message::Editor),
             }
         } else {
@@ -428,27 +590,18 @@ impl Requiescat {
                 .into()
         };
 
-        self.with_global_menu(content, Some(window) == self.main_window)
+        self.with_global_menu(content, self.windows.is_main(window))
     }
 
     fn title(&self, window: window::Id) -> String {
-        if Some(window) == self.person_directory_window {
+        if Some(window) == self.windows.person_directory {
             self.localizer.text(MessageId::PersonDirectoryTitle)
-        } else if Some(window) == self.new_person_window {
+        } else if Some(window) == self.windows.new_person {
             self.localizer.text(MessageId::NewPersonTitle)
-        } else if self
-            .person_detail_windows
-            .iter()
-            .any(|(window_id, _)| *window_id == window)
-        {
+        } else if self.windows.person_detail_for_window(window).is_some() {
             self.localizer.text(MessageId::PersonDetailsTitle)
         } else if self.main_screen == MainScreen::MapEditor {
-            self.active_database
-                .as_deref()
-                .and_then(|path| path.file_stem())
-                .and_then(|name| name.to_str())
-                .map(|name| format!("{name} - Requiescat"))
-                .unwrap_or_else(|| "Requiescat".to_owned())
+            self.session.window_title()
         } else {
             self.localizer.text(MessageId::CemeteryLibraryTitle)
         }
@@ -480,6 +633,9 @@ impl Requiescat {
                 self.app_menu_title(self.localizer.text(MessageId::AppMenuFile), AppMenu::File),
             );
             menu_bar = menu_bar.push(
+                self.app_menu_title(self.localizer.text(MessageId::AppMenuEdit), AppMenu::Edit),
+            );
+            menu_bar = menu_bar.push(
                 self.app_menu_title(self.localizer.text(MessageId::AppMenuView), AppMenu::View),
             );
         }
@@ -499,7 +655,8 @@ impl Requiescat {
         if show_app_menu && let Some(menu) = self.app_menu {
             let dropdown_x = match menu {
                 AppMenu::File => 10.0,
-                AppMenu::View => 56.0,
+                AppMenu::Edit => 56.0,
+                AppMenu::View => 102.0,
             };
 
             return stack![base]
@@ -535,6 +692,10 @@ impl Requiescat {
                 Message::ExportActiveCemeteryPdf,
             ),
         ];
+        const EDIT_ACTIONS: &[(MessageId, Message)] = &[(
+            MessageId::AppMenuDuplicateLastGrave,
+            Message::DuplicateLastGrave,
+        )];
         const VIEW_ACTIONS: &[(MessageId, Message)] = &[(
             MessageId::AppMenuPersonDirectory,
             Message::OpenPersonDirectory,
@@ -547,6 +708,7 @@ impl Requiescat {
 
         let actions = match menu {
             AppMenu::File => FILE_ACTIONS,
+            AppMenu::Edit => EDIT_ACTIONS,
             AppMenu::View => VIEW_ACTIONS,
         };
 
@@ -594,7 +756,7 @@ impl Requiescat {
     }
 
     fn open_person_directory(&mut self) -> Task<Message> {
-        if let Some(id) = self.person_directory_window {
+        if let Some(id) = self.windows.person_directory {
             return window::gain_focus(id);
         }
 
@@ -604,18 +766,14 @@ impl Requiescat {
             ..Default::default()
         });
 
-        self.person_directory_window = Some(id);
+        self.windows.person_directory = Some(id);
 
         open.map(Message::PersonDirectoryOpened)
     }
 
-    fn open_person_details(&mut self, person_id: requiescat::models::PersonId) -> Task<Message> {
-        if let Some((id, _)) = self
-            .person_detail_windows
-            .iter()
-            .find(|(_, open_person_id)| *open_person_id == person_id)
-        {
-            return window::gain_focus(*id);
+    fn open_person_details(&mut self, person_id: PersonId) -> Task<Message> {
+        if let Some(id) = self.windows.window_for_person(person_id) {
+            return window::gain_focus(id);
         }
 
         let (id, open) = window::open(window::Settings {
@@ -624,13 +782,13 @@ impl Requiescat {
             ..Default::default()
         });
 
-        self.person_detail_windows.push((id, person_id));
+        self.windows = self.windows.with_person_details(id, person_id);
 
         open.map(move |window_id| Message::PersonDetailsOpened(window_id, person_id))
     }
 
     fn open_new_person_dialog(&mut self) -> Task<Message> {
-        if let Some(id) = self.new_person_window {
+        if let Some(id) = self.windows.new_person {
             return window::gain_focus(id);
         }
 
@@ -642,7 +800,7 @@ impl Requiescat {
             ..Default::default()
         });
 
-        self.new_person_window = Some(id);
+        self.windows.new_person = Some(id);
 
         open.map(Message::NewPersonWindowOpened)
     }
@@ -738,15 +896,12 @@ impl Requiescat {
         match SqliteCemeteryRepository::new(path.clone()).load() {
             Ok(cemetery) => {
                 self.editor = MapEditor::from_cemetery(cemetery);
-                self.active_database = Some(path);
+                self.session = CemeterySession::open(path);
                 self.main_screen = MainScreen::MapEditor;
                 self.status = None;
-                self.save_state = SaveState::Clean;
-                self.save_revision = 0;
-                self.saved_revision = 0;
-                self.save_in_flight = false;
 
-                self.main_window
+                self.windows
+                    .main
                     .map(|id| window::resize(id, Size::new(1100.0, 760.0)))
                     .unwrap_or_else(Task::none)
             }
@@ -874,12 +1029,7 @@ impl Requiescat {
     }
 
     fn active_cemetery_title(&self) -> String {
-        self.active_database
-            .as_deref()
-            .and_then(|path| path.file_stem())
-            .and_then(|name| name.to_str())
-            .unwrap_or("Cemetery")
-            .to_owned()
+        self.session.active_cemetery_title()
     }
 
     fn refresh_cemeteries(&mut self) {
@@ -896,26 +1046,13 @@ impl Requiescat {
     }
 
     fn save_active_cemetery(&mut self) -> bool {
-        let Some(path) = self.active_database.clone() else {
-            return false;
-        };
-
-        let mut repository = SqliteCemeteryRepository::new(path);
-        match repository.save(self.editor.cemetery()) {
-            Ok(()) => {
-                self.save_state = SaveState::Clean;
-                self.saved_revision = self.save_revision;
-                true
-            }
-            Err(error) => {
-                self.save_state = SaveState::Failed(error.to_string());
-                false
-            }
-        }
+        let (session, saved) = self.session.save_now(self.editor.cemetery());
+        self.session = session;
+        saved
     }
 
     fn save_changes_before_export(&mut self) -> bool {
-        if self.has_unsaved_changes() && !self.save_active_cemetery() {
+        if self.session.has_unsaved_changes() && !self.save_active_cemetery() {
             self.status = Some(AppStatus::ExportSaveFailed);
             false
         } else {
@@ -923,41 +1060,30 @@ impl Requiescat {
         }
     }
 
-    fn has_unsaved_changes(&self) -> bool {
-        matches!(self.save_state, SaveState::Dirty | SaveState::Failed(_))
-    }
-
-    fn mark_dirty(&mut self) {
-        self.save_revision = self.save_revision.saturating_add(1);
-        self.save_state = SaveState::Dirty;
-    }
-
     fn mark_dirty_and_autosave(&mut self) -> Task<Message> {
-        self.mark_dirty();
+        self.session = self.session.dirty();
         self.save_active_cemetery_in_background()
     }
 
     fn save_active_cemetery_in_background(&mut self) -> Task<Message> {
-        if self.save_in_flight || self.save_revision == self.saved_revision {
-            return Task::none();
-        }
-
-        let Some(path) = self.active_database.clone() else {
+        let Some((session, request)) = self.session.begin_background_save(self.editor.cemetery())
+        else {
             return Task::none();
         };
+        self.session = session;
 
-        let revision = self.save_revision;
-        let cemetery = self.editor.cemetery().clone();
-        self.save_in_flight = true;
-
-        Task::perform(save_cemetery_snapshot(path, cemetery), move |result| {
-            Message::SaveFinished { revision, result }
-        })
+        Task::perform(
+            save_cemetery_snapshot(request.path, request.cemetery),
+            move |result| Message::SaveFinished {
+                revision: request.revision,
+                result,
+            },
+        )
     }
 }
 
 async fn save_cemetery_snapshot(path: PathBuf, cemetery: Cemetery) -> Result<(), String> {
-    let mut repository = SqliteCemeteryRepository::new(path);
+    let repository = SqliteCemeteryRepository::new(path);
     repository
         .save(&cemetery)
         .map_err(|error: PersistenceError| error.to_string())
