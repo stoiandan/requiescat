@@ -69,10 +69,13 @@ born = Născut(ă) la { $date }
 tool-select = Selectează mormântul
 tool-draw = Desenează mormântul
 tool-stamp-grave = Plasează mormântul
+tool-delimiter = Desenează delimitator
+tool-delimiter-wall = Delimitator zid
+tool-delimiter-road = Delimitator drum
 tool-grab = Mută morninte și/sau navighează pe hartă
 tool-grid = Arată/ascunde axele
-tool-erase = Șterge mormântul
-tool-grave-color = Culoarea mormântului
+tool-erase = Șterge mormântul sau delimitatorul
+tool-grave-color = Culoarea desenului
 tool-color-swatch = Alege culoarea
 
 file-filter-sqlite-cemetery = Cimitir SQLite

@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use iced::Vector;
 
 use super::{
-    CemeteryMap, Grave, GraveColor, GraveGps, GraveId, GraveRectangle, Person, PersonDate,
-    PersonDirectory, PersonId,
+    CemeteryMap, Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveGps, GraveId,
+    GraveRectangle, Person, PersonDate, PersonDirectory, PersonId,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -14,10 +14,14 @@ pub struct Cemetery {
 }
 
 impl Cemetery {
-    pub fn from_records(graves: Vec<Grave>, people: Vec<Person>) -> Self {
+    pub fn from_records(
+        graves: Vec<Grave>,
+        delimiters: Vec<Delimiter>,
+        people: Vec<Person>,
+    ) -> Self {
         let people = people_with_valid_grave_assignments(people, &graves);
         Self {
-            map: CemeteryMap::from_graves(graves),
+            map: CemeteryMap::from_records(graves, delimiters),
             people: PersonDirectory::from_people(people),
         }
     }
@@ -35,6 +39,20 @@ impl Cemetery {
         self.people.unassign_all_from_grave(id);
     }
 
+    pub fn add_delimiter_with_color_and_type(
+        &mut self,
+        rectangle: GraveRectangle,
+        color: GraveColor,
+        delimiter_type: DelimiterType,
+    ) -> DelimiterId {
+        self.map
+            .add_delimiter_with_color_and_type(rectangle, color, delimiter_type)
+    }
+
+    pub fn erase_delimiter(&mut self, id: DelimiterId) {
+        self.map.erase_delimiter(id);
+    }
+
     pub fn move_grave(&mut self, id: GraveId, delta: Vector) {
         self.map.move_grave(id, delta);
     }
@@ -47,12 +65,20 @@ impl Cemetery {
         self.map.grave_at(point)
     }
 
+    pub fn delimiter_at(&self, point: iced::Point) -> Option<DelimiterId> {
+        self.map.delimiter_at(point)
+    }
+
     pub fn grave(&self, id: GraveId) -> Option<&Grave> {
         self.map.grave(id)
     }
 
     pub fn graves(&self) -> &[Grave] {
         self.map.graves()
+    }
+
+    pub fn delimiters(&self) -> &[Delimiter] {
+        self.map.delimiters()
     }
 
     pub fn create_person_with_details(
@@ -206,7 +232,7 @@ mod tests {
             Some(GraveId::new(99)),
         );
 
-        let cemetery = Cemetery::from_records(Vec::new(), vec![person]);
+        let cemetery = Cemetery::from_records(Vec::new(), Vec::new(), vec![person]);
 
         assert_eq!(
             cemetery.person(PersonId::new(1)).and_then(Person::grave_id),

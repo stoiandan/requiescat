@@ -4,7 +4,9 @@ use iced::Point;
 
 use super::PdfExportOptions;
 use super::content::PdfContent;
+use super::delimiter_rendering;
 use super::layout::{CemeteryBounds, MapTransform, PageLayout, grid_interval};
+use super::map_geometry::PdfRectangle;
 use crate::models::{Cemetery, GraveColor, GraveId};
 
 pub(super) fn header(content: &mut PdfContent, options: &PdfExportOptions, layout: PageLayout) {
@@ -53,23 +55,21 @@ pub(super) fn map(
 
     let transform = MapTransform::new(bounds, layout);
     render_grid(content, &bounds, &transform);
+    delimiter_rendering::render(content, cemetery, &transform);
 
     let labels_by_grave = labels_by_grave(cemetery);
 
     for grave in cemetery.graves() {
-        let rectangle = grave.rectangle();
-        let top_left = transform.point(rectangle.top_left());
-        let size = transform.size(rectangle.size());
-        let y = top_left.y - size.height;
+        let pdf_rectangle = PdfRectangle::from_map(grave.rectangle(), &transform);
         let (red, green, blue) = rgb(grave.color());
 
         content.fill_color(red, green, blue);
-        content.rectangle(top_left.x, y, size.width, size.height);
+        pdf_rectangle.draw(content);
         content.fill();
 
         content.stroke_color(0.95, 0.98, 0.98);
         content.line_width(1.25);
-        content.rectangle(top_left.x, y, size.width, size.height);
+        pdf_rectangle.draw(content);
         content.stroke();
 
         render_grave_label(
@@ -79,10 +79,10 @@ pub(super) fn map(
                 .map(Vec::as_slice)
                 .unwrap_or_default(),
             &grave.id().to_string(),
-            top_left.x,
-            y,
-            size.width,
-            size.height,
+            pdf_rectangle.x,
+            pdf_rectangle.y,
+            pdf_rectangle.width,
+            pdf_rectangle.height,
         );
     }
 }

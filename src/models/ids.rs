@@ -2,6 +2,9 @@
 pub struct GraveId(i64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DelimiterId(i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PersonId(i64);
 
 impl GraveId {
@@ -15,6 +18,22 @@ impl GraveId {
 }
 
 impl std::fmt::Display for GraveId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value())
+    }
+}
+
+impl DelimiterId {
+    pub fn new(value: i64) -> Self {
+        Self(value)
+    }
+
+    pub fn value(self) -> i64 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for DelimiterId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.value())
     }

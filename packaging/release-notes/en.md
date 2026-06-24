@@ -1,1 +1,1 @@
-This release adds a polished A0 landscape PDF export for cemetery maps. The map editor File menu now includes Export to PDF, which renders the entire cemetery map from the saved cemetery data instead of the current zoom level or viewport.
+This release adds GPS coordinates for graves, so each grave can store and display an exact location alongside its map position. It also simplifies the cemetery library menu, refreshes Romanian copy, and includes updater and internal refactors that keep the app easier to maintain.

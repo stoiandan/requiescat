@@ -1,5 +1,7 @@
 mod content;
+mod delimiter_rendering;
 mod layout;
+mod map_geometry;
 mod render;
 mod writer;
 

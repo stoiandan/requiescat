@@ -3,7 +3,8 @@ use iced::{Point, Size, Vector};
 
 use super::Tool;
 use super::geometry::is_worth_drawing;
-use super::map_editor::{CanvasState, DragState, MapEditor, Message};
+use super::map_canvas::{CanvasState, DragState};
+use super::map_editor::{MapEditor, Message};
 use crate::models::GraveRectangle;
 
 pub fn handle_event(
@@ -48,7 +49,7 @@ pub fn handle_event(
 fn handle_left_press(editor: &MapEditor, state: &mut CanvasState, cursor: Point) {
     match editor.selected_tool() {
         Tool::Select => {}
-        Tool::Draw => {
+        Tool::Draw | Tool::DrawDelimiter => {
             let current_position_to_world = editor.camera().screen_to_world(cursor);
             state.drag = DragState::Drawing {
                 start: current_position_to_world,
@@ -83,21 +84,29 @@ fn handle_left_release(
 
     match drag {
         DragState::Drawing { start, current } => {
-            if editor.selected_tool() != Tool::Draw {
-                return Some(Action::request_redraw());
-            }
-
+            let selected_tool = editor.selected_tool();
             let end = cursor_from_canvas
                 .map(|cursor| editor.camera().screen_to_world(cursor))
                 .unwrap_or(current);
 
-            if is_worth_drawing(start, end) {
-                return Some(Action::publish(Message::CreateGrave(
-                    GraveRectangle::from_corners(start, end),
-                )));
+            if !is_worth_drawing(start, end) {
+                return Some(Action::request_redraw());
             }
 
-            return Some(Action::request_redraw());
+            match selected_tool {
+                Tool::Draw | Tool::DrawDelimiter => {
+                    let rectangle = GraveRectangle::from_corners(start, end);
+                    let message = match selected_tool {
+                        Tool::Draw => Message::CreateGrave(rectangle),
+                        Tool::DrawDelimiter => Message::CreateDelimiter(rectangle),
+                        _ => unreachable!(),
+                    };
+                    return Some(Action::publish(message));
+                }
+                _ => {
+                    return Some(Action::request_redraw());
+                }
+            }
         }
         DragState::Panning { .. } => {
             return None;
@@ -118,6 +127,7 @@ fn handle_left_release(
             )));
         }
         Tool::Draw => {}
+        Tool::DrawDelimiter => {}
         Tool::StampGrave => {
             let top_left = editor.camera().screen_to_world(cursor);
 
@@ -130,6 +140,9 @@ fn handle_left_release(
             let to_world = editor.camera().screen_to_world(cursor);
             if let Some(id) = editor.cemetery().grave_at(to_world) {
                 return Some(Action::publish(Message::EraseGrave(id)));
+            }
+            if let Some(id) = editor.cemetery().delimiter_at(to_world) {
+                return Some(Action::publish(Message::EraseDelimiter(id)));
             }
         }
     }
@@ -144,7 +157,7 @@ fn handle_cursor_moved(
 ) -> Option<canvas::Action<Message>> {
     match editor.selected_tool() {
         Tool::Select => {}
-        Tool::Draw => {
+        Tool::Draw | Tool::DrawDelimiter => {
             if let DragState::Drawing { start, .. } = state.drag {
                 state.drag = DragState::Drawing {
                     start,

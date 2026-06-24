@@ -6,11 +6,12 @@ use iced::{Point, Size};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 use crate::models::{
-    Cemetery, Grave, GraveColor, GraveGps, GraveId, GraveRectangle, Person, PersonDate, PersonId,
+    Cemetery, Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveGps, GraveId,
+    GraveRectangle, Person, PersonDate, PersonId,
 };
 
 const APPLICATION_ID: &str = "requiescat";
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 pub trait CemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError>;
@@ -170,13 +171,18 @@ impl SqliteCemeteryRepository {
         if !table_exists(&connection, "requiescat_metadata")? {
             initialize_schema(&connection)?;
         }
+        migrate_schema(&connection)?;
         Ok(connection)
     }
 }
 
 impl CemeteryRepository for SqliteCemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError> {
-        let connection = self.read_only_connection()?;
+        let connection = Connection::open(&self.path)?;
+        configure_connection(&connection)?;
+        if table_exists(&connection, "requiescat_metadata")? {
+            migrate_schema(&connection)?;
+        }
         validate_current_schema(&connection)?;
 
         let graves = {
@@ -202,6 +208,32 @@ impl CemeteryRepository for SqliteCemeteryRepository {
             rows.collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .map(Grave::try_from)
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        let delimiters = {
+            let mut statement = connection.prepare(
+                "
+                SELECT id, x, y, width, height, color, type
+                FROM delimiters
+                ORDER BY id
+                ",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok(DelimiterRow {
+                    id: row.get(0)?,
+                    x: row.get(1)?,
+                    y: row.get(2)?,
+                    width: row.get(3)?,
+                    height: row.get(4)?,
+                    color: row.get(5)?,
+                    delimiter_type: row.get(6)?,
+                })
+            })?;
+
+            rows.collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(Delimiter::try_from)
                 .collect::<Result<Vec<_>, _>>()?
         };
 
@@ -231,7 +263,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
                 .collect::<Result<Vec<_>, _>>()?
         };
 
-        Ok(Cemetery::from_records(graves, people))
+        Ok(Cemetery::from_records(graves, delimiters, people))
     }
 
     fn save(&mut self, cemetery: &Cemetery) -> Result<(), PersistenceError> {
@@ -241,6 +273,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
 
         transaction.execute("DELETE FROM persons", [])?;
         transaction.execute("DELETE FROM graves", [])?;
+        transaction.execute("DELETE FROM delimiters", [])?;
 
         {
             let mut statement = transaction.prepare(
@@ -254,6 +287,28 @@ impl CemeteryRepository for SqliteCemeteryRepository {
                 let row = GraveRow::from(grave);
                 statement.execute(params![
                     row.id, row.x, row.y, row.width, row.height, row.color, row.gps
+                ])?;
+            }
+        }
+
+        {
+            let mut statement = transaction.prepare(
+                "
+                INSERT INTO delimiters (id, x, y, width, height, color, type)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ",
+            )?;
+
+            for delimiter in cemetery.delimiters().iter().copied() {
+                let row = DelimiterRow::from(delimiter);
+                statement.execute(params![
+                    row.id,
+                    row.x,
+                    row.y,
+                    row.width,
+                    row.height,
+                    row.color,
+                    row.delimiter_type
                 ])?;
             }
         }
@@ -317,6 +372,16 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
             date_of_birth TEXT NOT NULL,
             date_of_decease TEXT,
             grave_id INTEGER REFERENCES graves(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS delimiters (
+            id INTEGER PRIMARY KEY,
+            x REAL NOT NULL,
+            y REAL NOT NULL,
+            width REAL NOT NULL,
+            height REAL NOT NULL,
+            color TEXT NOT NULL DEFAULT '#a61f28',
+            type TEXT NOT NULL DEFAULT 'wall'
         );
 
         CREATE TABLE IF NOT EXISTS requiescat_migrations (
@@ -384,7 +449,50 @@ fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceErr
     }
 
     let version = schema_version(connection)?;
-    if version != CURRENT_SCHEMA_VERSION {
+    if version > CURRENT_SCHEMA_VERSION {
+        return Err(PersistenceError::InvalidData(format!(
+            "Unsupported cemetery schema version: {version}"
+        )));
+    }
+    if version >= 2 {
+        validate_table_columns(
+            connection,
+            "delimiters",
+            &["id", "x", "y", "width", "height", "color", "type"],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn migrate_schema(connection: &Connection) -> Result<(), PersistenceError> {
+    let application = metadata_value(connection, "application")?;
+    if application.as_deref() != Some(APPLICATION_ID) {
+        return Ok(());
+    }
+
+    let mut version = schema_version(connection)?;
+
+    if version < 2 {
+        connection.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS delimiters (
+                id INTEGER PRIMARY KEY,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                width REAL NOT NULL,
+                height REAL NOT NULL,
+                color TEXT NOT NULL DEFAULT '#a61f28',
+                type TEXT NOT NULL DEFAULT 'wall'
+            );
+            INSERT OR IGNORE INTO requiescat_migrations (version) VALUES (2);
+            UPDATE requiescat_metadata SET value = '2' WHERE key = 'schema_version';
+            ",
+        )?;
+        version = 2;
+    }
+
+    if version > CURRENT_SCHEMA_VERSION {
         return Err(PersistenceError::InvalidData(format!(
             "Unsupported cemetery schema version: {version}"
         )));
@@ -466,6 +574,17 @@ struct GraveRow {
 }
 
 #[derive(Debug, Clone)]
+struct DelimiterRow {
+    id: i64,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: String,
+    delimiter_type: String,
+}
+
+#[derive(Debug, Clone)]
 struct PersonRow {
     id: i64,
     first_name: String,
@@ -473,6 +592,47 @@ struct PersonRow {
     date_of_birth: String,
     date_of_decease: String,
     grave_id: Option<i64>,
+}
+
+impl From<Delimiter> for DelimiterRow {
+    fn from(delimiter: Delimiter) -> Self {
+        let rectangle = delimiter.rectangle();
+        let top_left = rectangle.top_left();
+        let size = rectangle.size();
+
+        Self {
+            id: delimiter.id().value(),
+            x: top_left.x,
+            y: top_left.y,
+            width: size.width,
+            height: size.height,
+            color: delimiter.color().to_hex(),
+            delimiter_type: delimiter.delimiter_type().as_str().to_owned(),
+        }
+    }
+}
+
+impl TryFrom<DelimiterRow> for Delimiter {
+    type Error = PersistenceError;
+
+    fn try_from(row: DelimiterRow) -> Result<Self, Self::Error> {
+        let delimiter_type = DelimiterType::from_str(&row.delimiter_type).ok_or_else(|| {
+            PersistenceError::InvalidData(format!(
+                "Delimiter {} has invalid type: {}",
+                row.id, row.delimiter_type
+            ))
+        })?;
+
+        Ok(Delimiter::with_color_and_type(
+            DelimiterId::new(row.id),
+            GraveRectangle::from_top_left_size(
+                Point::new(row.x, row.y),
+                Size::new(row.width, row.height),
+            ),
+            GraveColor::from_hex(&row.color).unwrap_or_default(),
+            delimiter_type,
+        ))
+    }
 }
 
 impl From<Grave> for GraveRow {
@@ -960,6 +1120,11 @@ mod tests {
         );
         let grave_gps = GraveGps::parse("51° 30′ 26.64″ N, 0° 7′ 40.08″ W").unwrap();
         cemetery.update_grave_gps(grave_id, Some(grave_gps));
+        cemetery.add_delimiter_with_color_and_type(
+            GraveRectangle::from_top_left_size(Point::new(2.0, 4.0), Size::new(200.0, 20.0)),
+            GraveColor::from_rgb8(71, 141, 86),
+            DelimiterType::Road,
+        );
         cemetery.create_person_with_details(
             "Ada".to_owned(),
             "Lovelace".to_owned(),
@@ -980,6 +1145,8 @@ mod tests {
         );
         assert_eq!(loaded.search_people("").len(), 1);
         assert_eq!(loaded.search_people("Ada")[0].grave_id(), Some(grave_id));
+        assert_eq!(loaded.delimiters().len(), 1);
+        assert_eq!(loaded.delimiters()[0].delimiter_type(), DelimiterType::Road);
         assert_eq!(
             loaded.add_grave_with_color(
                 GraveRectangle::from_top_left_size(

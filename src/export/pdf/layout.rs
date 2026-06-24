@@ -1,6 +1,6 @@
 use iced::{Point, Size};
 
-use crate::models::Cemetery;
+use crate::models::{Cemetery, GraveRectangle};
 
 const A0_LANDSCAPE_WIDTH: f32 = 3370.39;
 const A0_LANDSCAPE_HEIGHT: f32 = 2383.94;
@@ -50,8 +50,17 @@ pub(super) struct CemeteryBounds {
 
 impl CemeteryBounds {
     pub(super) fn from_cemetery(cemetery: &Cemetery) -> Option<Self> {
-        let mut graves = cemetery.graves().iter();
-        let first = graves.next()?.rectangle();
+        let mut rectangles = cemetery
+            .graves()
+            .iter()
+            .map(|grave| grave.rectangle())
+            .chain(
+                cemetery
+                    .delimiters()
+                    .iter()
+                    .map(|delimiter| delimiter.rectangle()),
+            );
+        let first = rectangles.next()?;
         let mut bounds = Self {
             min: first.top_left(),
             max: Point::new(
@@ -60,21 +69,24 @@ impl CemeteryBounds {
             ),
         };
 
-        for grave in graves {
-            let rectangle = grave.rectangle();
-            bounds.min.x = bounds.min.x.min(rectangle.top_left().x);
-            bounds.min.y = bounds.min.y.min(rectangle.top_left().y);
-            bounds.max.x = bounds
-                .max
-                .x
-                .max(rectangle.top_left().x + rectangle.size().width);
-            bounds.max.y = bounds
-                .max
-                .y
-                .max(rectangle.top_left().y + rectangle.size().height);
+        for rectangle in rectangles {
+            bounds.include(rectangle);
         }
 
         Some(bounds.with_padding())
+    }
+
+    fn include(&mut self, rectangle: GraveRectangle) {
+        self.min.x = self.min.x.min(rectangle.top_left().x);
+        self.min.y = self.min.y.min(rectangle.top_left().y);
+        self.max.x = self
+            .max
+            .x
+            .max(rectangle.top_left().x + rectangle.size().width);
+        self.max.y = self
+            .max
+            .y
+            .max(rectangle.top_left().y + rectangle.size().height);
     }
 
     fn with_padding(mut self) -> Self {

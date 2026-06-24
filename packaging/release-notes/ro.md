@@ -1,1 +1,1 @@
-Această versiune adaugă export PDF în format A0 peisaj pentru hărțile cimitirelor. Meniul Fișier din editorul de hartă include acum Exportă PDF, iar exportul redă întreaga hartă din datele salvate ale cimitirului, nu nivelul curent de zoom sau zona vizibilă.
+Această versiune adaugă coordonate GPS pentru morminte, astfel încât fiecare mormânt poate păstra și afișa o poziție exactă pe lângă poziția din hartă. De asemenea, simplifică meniul bibliotecii de cimitire, îmbunătățește textele în română și include refactorizări pentru actualizator și pentru codul intern.

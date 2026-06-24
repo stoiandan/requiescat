@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::widget::canvas;
-use iced::{Point, Rectangle};
+use iced::{Point, Rectangle, Size};
 
 use super::Camera;
-use super::map_editor::CanvasState;
-use crate::models::{Cemetery, Grave, GraveId, GraveRectangle};
+use super::map_canvas::CanvasState;
+use crate::models::{Cemetery, GraveId, GraveRectangle};
 
 pub fn grid(frame: &mut canvas::Frame, camera: &Camera, bounds: Rectangle) {
     const SQUARE_SIZE: f32 = 50.0;
@@ -79,8 +79,7 @@ pub fn grave_preview(frame: &mut canvas::Frame, state: &CanvasState, camera: &Ca
     if let Some(current_drag) = state.current_drag_position() {
         let start = state.left_pressed_at().unwrap_or(current_drag);
         let preview = GraveRectangle::from_corners(start, current_drag);
-        let top_left = camera.world_to_screen(preview.top_left());
-        let size = preview.size() * camera.zoom;
+        let (top_left, size) = screen_rectangle(preview, camera);
         let path = canvas::Path::rectangle(top_left, size);
 
         frame.stroke(
@@ -109,7 +108,7 @@ pub fn graves(
     let visible_graves = cemetery
         .graves()
         .iter()
-        .filter(|grave| is_visible(grave, camera, bounds))
+        .filter(|grave| grave_is_visible(grave.rectangle(), camera, bounds))
         .collect::<Vec<_>>();
     let visible_grave_ids = visible_graves
         .iter()
@@ -119,8 +118,7 @@ pub fn graves(
 
     for grave in visible_graves {
         let rectangle = grave.rectangle();
-        let top_left = camera.world_to_screen(rectangle.top_left());
-        let size = rectangle.size() * camera.zoom;
+        let (top_left, size) = screen_rectangle(rectangle, camera);
         let grave_id = grave.id();
 
         frame.fill_rectangle(top_left, size, grave.color().to_iced());
@@ -148,14 +146,19 @@ pub fn graves(
     }
 }
 
-fn is_visible(grave: &Grave, camera: &Camera, bounds: Rectangle) -> bool {
-    let rectangle = grave.rectangle();
-    let top_left = camera.world_to_screen(rectangle.top_left());
-    let size = rectangle.size() * camera.zoom;
+fn grave_is_visible(rectangle: GraveRectangle, camera: &Camera, bounds: Rectangle) -> bool {
+    let (top_left, size) = screen_rectangle(rectangle, camera);
     let right = top_left.x + size.width;
     let bottom = top_left.y + size.height;
 
     right >= 0.0 && bottom >= 0.0 && top_left.x <= bounds.width && top_left.y <= bounds.height
+}
+
+fn screen_rectangle(rectangle: GraveRectangle, camera: &Camera) -> (Point, Size) {
+    (
+        camera.world_to_screen(rectangle.top_left()),
+        rectangle.size() * camera.zoom,
+    )
 }
 
 fn grave_labels(

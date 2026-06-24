@@ -69,10 +69,13 @@ born = Born { $date }
 tool-select = Select grave
 tool-draw = Draw grave
 tool-stamp-grave = Stamp grave
+tool-delimiter = Draw delimiter
+tool-delimiter-wall = Wall delimiter
+tool-delimiter-road = Road delimiter
 tool-grab = Move grave or pan map
 tool-grid = Toggle grid
-tool-erase = Erase grave
-tool-grave-color = Grave color
+tool-erase = Erase grave or delimiter
+tool-grave-color = Drawing color
 tool-color-swatch = Select this color
 
 file-filter-sqlite-cemetery = SQLite cemetery

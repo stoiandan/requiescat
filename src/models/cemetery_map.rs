@@ -1,24 +1,35 @@
 use iced::Vector;
 
-use super::{Grave, GraveColor, GraveGps, GraveId, GraveRectangle};
+use super::{
+    Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveGps, GraveId, GraveRectangle,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct CemeteryMap {
     graves: Vec<Grave>,
+    delimiters: Vec<Delimiter>,
     next_grave_id: i64,
+    next_delimiter_id: i64,
 }
 
 impl CemeteryMap {
-    pub fn from_graves(graves: Vec<Grave>) -> Self {
+    pub fn from_records(graves: Vec<Grave>, delimiters: Vec<Delimiter>) -> Self {
         let next_grave_id = graves
             .iter()
             .map(|grave| grave.id().value())
             .max()
             .unwrap_or_default();
+        let next_delimiter_id = delimiters
+            .iter()
+            .map(|delimiter| delimiter.id().value())
+            .max()
+            .unwrap_or_default();
 
         Self {
             graves,
+            delimiters,
             next_grave_id,
+            next_delimiter_id,
         }
     }
 
@@ -32,9 +43,35 @@ impl CemeteryMap {
         id
     }
 
+    pub fn add_delimiter_with_color_and_type(
+        &mut self,
+        rectangle: GraveRectangle,
+        color: GraveColor,
+        delimiter_type: DelimiterType,
+    ) -> DelimiterId {
+        let id = self.next_delimiter_id();
+        self.delimiters.push(Delimiter::with_color_and_type(
+            id,
+            rectangle,
+            color,
+            delimiter_type,
+        ));
+        id
+    }
+
     pub fn erase_grave(&mut self, id: GraveId) {
         if let Some(index) = self.index_of(id) {
             self.graves.remove(index);
+        }
+    }
+
+    pub fn erase_delimiter(&mut self, id: DelimiterId) {
+        if let Some(index) = self
+            .delimiters
+            .iter()
+            .position(|delimiter| delimiter.id() == id)
+        {
+            self.delimiters.remove(index);
         }
     }
 
@@ -54,8 +91,20 @@ impl CemeteryMap {
             .map(Grave::id)
     }
 
+    pub fn delimiter_at(&self, point: iced::Point) -> Option<DelimiterId> {
+        self.delimiters
+            .iter()
+            .rev()
+            .find(|delimiter| delimiter.contains(point))
+            .map(Delimiter::id)
+    }
+
     pub fn graves(&self) -> &[Grave] {
         &self.graves
+    }
+
+    pub fn delimiters(&self) -> &[Delimiter] {
+        &self.delimiters
     }
 
     pub fn grave(&self, id: GraveId) -> Option<&Grave> {
@@ -78,6 +127,11 @@ impl CemeteryMap {
     fn next_id(&mut self) -> GraveId {
         self.next_grave_id += 1;
         GraveId::new(self.next_grave_id)
+    }
+
+    fn next_delimiter_id(&mut self) -> DelimiterId {
+        self.next_delimiter_id += 1;
+        DelimiterId::new(self.next_delimiter_id)
     }
 }
 
@@ -105,6 +159,26 @@ mod tests {
     }
 
     #[test]
+    fn add_delimiter_assigns_incrementing_ids_and_stores_delimiters() {
+        let mut map = CemeteryMap::default();
+
+        let first = map.add_delimiter_with_color_and_type(
+            rectangle_at(0.0, 0.0),
+            GraveColor::default(),
+            DelimiterType::Wall,
+        );
+        let second = map.add_delimiter_with_color_and_type(
+            rectangle_at(20.0, 0.0),
+            GraveColor::default(),
+            DelimiterType::Road,
+        );
+
+        assert_eq!(first, DelimiterId::new(1));
+        assert_eq!(second, DelimiterId::new(2));
+        assert_eq!(map.delimiters().len(), 2);
+    }
+
+    #[test]
     fn grave_at_returns_the_matching_grave_id() {
         let mut map = CemeteryMap::default();
         let first = map.add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
@@ -122,6 +196,23 @@ mod tests {
         let topmost = map.add_grave_with_color(rectangle_at(5.0, 5.0), GraveColor::default());
 
         assert_eq!(map.grave_at(Point::new(7.0, 7.0)), Some(topmost));
+    }
+
+    #[test]
+    fn delimiter_at_returns_the_topmost_matching_delimiter() {
+        let mut map = CemeteryMap::default();
+        map.add_delimiter_with_color_and_type(
+            rectangle_at(0.0, 0.0),
+            GraveColor::default(),
+            DelimiterType::Wall,
+        );
+        let topmost = map.add_delimiter_with_color_and_type(
+            rectangle_at(5.0, 5.0),
+            GraveColor::default(),
+            DelimiterType::Road,
+        );
+
+        assert_eq!(map.delimiter_at(iced::Point::new(7.0, 7.0)), Some(topmost));
     }
 
     #[test]
@@ -154,5 +245,25 @@ mod tests {
         assert!(map.grave(removed).is_none());
         assert!(map.grave(remaining).is_some());
         assert_eq!(map.graves().len(), 1);
+    }
+
+    #[test]
+    fn erase_delimiter_removes_only_the_requested_delimiter() {
+        let mut map = CemeteryMap::default();
+        let removed = map.add_delimiter_with_color_and_type(
+            rectangle_at(0.0, 0.0),
+            GraveColor::default(),
+            DelimiterType::Wall,
+        );
+        let remaining = map.add_delimiter_with_color_and_type(
+            rectangle_at(20.0, 0.0),
+            GraveColor::default(),
+            DelimiterType::Road,
+        );
+
+        map.erase_delimiter(removed);
+
+        assert_eq!(map.delimiters().len(), 1);
+        assert_eq!(map.delimiters()[0].id(), remaining);
     }
 }

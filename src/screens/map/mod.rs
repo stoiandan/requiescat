@@ -1,7 +1,9 @@
 mod camera;
+mod delimiter_drawing;
 mod drawing;
 mod geometry;
 mod interaction;
+mod map_canvas;
 pub mod map_editor;
 mod toolbar;
 

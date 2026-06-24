@@ -58,11 +58,6 @@ pub fn view<'a>(localizer: &'a Localizer, state: ViewState<'a>) -> Element<'a, M
 }
 
 fn landing_page<'a>(localizer: &'a Localizer, state: &ViewState<'a>) -> Element<'a, Message> {
-    let library_summary = match state.cemeteries.len() {
-        0 => localizer.text(MessageId::LibraryEmpty),
-        count => localizer.count(MessageId::LibraryCount, count),
-    };
-
     let heading = "Requiescat";
 
     let mut action_buttons = column![].spacing(10);
