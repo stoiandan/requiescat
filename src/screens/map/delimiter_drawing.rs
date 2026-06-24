@@ -69,17 +69,7 @@ fn draw_wall(
     let screen = ScreenRectangle::from_map(rectangle, camera);
     let outline = canvas::Path::rectangle(screen.top_left, screen.size);
 
-    frame.stroke(
-        &outline,
-        canvas::Stroke {
-            width: if preview { 2.0 } else { 3.0 },
-            style: canvas::Style::Solid(color),
-            line_dash: preview_dash(preview),
-            ..Default::default()
-        },
-    );
-
-    if screen.min_dimension() < 12.0 {
+    if screen.min_dimension() < 10.0 {
         return;
     }
 
@@ -106,17 +96,17 @@ fn draw_road(
     };
 
     frame.stroke(
-        &outline,
+        &screen.quarter(1),
         canvas::Stroke {
-            width: if preview { 2.0 } else { 2.5 },
+            width: if preview { 1.5 } else { 2.0 },
             style: canvas::Style::Solid(color),
             line_dash: dash,
             ..Default::default()
         },
     );
 
-    frame.stroke(
-        &screen.center_line(),
+        frame.stroke(
+        &screen.quarter(4),
         canvas::Stroke {
             width: if preview { 1.5 } else { 2.0 },
             style: canvas::Style::Solid(color),
@@ -128,27 +118,27 @@ fn draw_road(
 
 fn wall_zig_zag(screen: ScreenRectangle) -> canvas::Path {
     let inset = 5.0_f32.min(screen.min_dimension() / 4.0);
-    let left = screen.top_left.x + inset;
-    let right = screen.right() - inset;
-    let center_y = screen.center_y();
-    let amplitude = (screen.size.height / 5.0).clamp(3.0, 10.0);
-    let step = 12.0;
-    let mut x = left;
-    let mut high = true;
+    let x_center = screen.top_left.x + (screen.size.width / 2.0);
+    let bottom = screen.top_left_y() + screen.size.height;
+    let top_left_y = screen.top_left_y();
+    let amplitude = (screen.size.width / 5.0).clamp(3.0, 10.0);
+    let step = 20.0;
+    let mut y = top_left_y;
+    let mut zig = true;
 
     canvas::Path::new(|builder| {
-        builder.move_to(Point::new(left, center_y));
-        while x < right {
-            x = (x + step).min(right);
+        builder.move_to(Point::new(x_center, top_left_y));
+        while y < bottom {
+            y = (y + step).min(bottom);
             builder.line_to(Point::new(
-                x,
-                if high {
-                    center_y - amplitude
+                if zig {
+                    x_center - amplitude
                 } else {
-                    center_y + amplitude
+                    x_center + amplitude
                 },
+                y
             ));
-            high = !high;
+            zig = !zig;
         }
     })
 }
@@ -195,18 +185,20 @@ impl ScreenRectangle {
         self.top_left.y + self.size.height
     }
 
-    fn center_y(self) -> f32 {
-        self.top_left.y + self.size.height / 2.0
+    fn top_left_y(self) -> f32 {
+        self.top_left.y
     }
 
     fn min_dimension(self) -> f32 {
         self.size.width.min(self.size.height)
     }
 
-    fn center_line(self) -> canvas::Path {
+    fn quarter(self, quarter: u32) -> canvas::Path {
+        let quarter = quarter.clamp(1, 4);
         canvas::Path::line(
-            Point::new(self.top_left.x, self.center_y()),
-            Point::new(self.right(), self.center_y()),
+            Point::new(self.top_left.x + self.size.width / quarter as f32, self.top_left.y),
+            Point::new(self.top_left.x + self.size.width / quarter as f32, self.top_left.y + self.size.height),
         )
     }
+    
 }
