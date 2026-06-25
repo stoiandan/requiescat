@@ -4,7 +4,7 @@ use iced::Vector;
 
 use super::{
     CemeteryMap, Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveGps, GraveId,
-    GraveRectangle, Person, PersonDate, PersonDirectory, PersonId,
+    GraveRectangle, Person, PersonDate, PersonDirectory, PersonId, Tags,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -73,6 +73,10 @@ impl Cemetery {
         self.map.update_grave_gps(id, gps)
     }
 
+    pub fn update_grave_tags(&mut self, id: GraveId, tags: Tags) -> bool {
+        self.map.update_grave_tags(id, tags)
+    }
+
     pub fn grave_at(&self, point: iced::Point) -> Option<GraveId> {
         self.map.grave_at(point)
     }
@@ -93,6 +97,10 @@ impl Cemetery {
         self.map.graves()
     }
 
+    pub fn search_graves(&self, query: &str) -> Vec<&Grave> {
+        self.map.search_graves(query)
+    }
+
     pub fn delimiters(&self) -> &[Delimiter] {
         self.map.delimiters()
     }
@@ -104,6 +112,7 @@ impl Cemetery {
         date_of_birth: PersonDate,
         date_of_decease: Option<PersonDate>,
         grave_id: Option<GraveId>,
+        tags: Tags,
     ) -> PersonId {
         self.people.create_person_with_details(
             first_name,
@@ -111,6 +120,7 @@ impl Cemetery {
             date_of_birth,
             date_of_decease,
             grave_id.filter(|id| self.grave(*id).is_some()),
+            tags,
         )
     }
 
@@ -185,6 +195,7 @@ mod tests {
             PersonDate::parse("10-12-1815").unwrap(),
             None,
             grave_id,
+            Tags::default(),
         )
     }
 
@@ -246,6 +257,7 @@ mod tests {
             PersonDate::parse("10-12-1815").unwrap(),
             None,
             Some(GraveId::new(99)),
+            Tags::default(),
         );
 
         let cemetery = Cemetery::from_records(Vec::new(), Vec::new(), vec![person]);

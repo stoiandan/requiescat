@@ -7,11 +7,11 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 use crate::models::{
     Cemetery, Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveGps, GraveId,
-    GraveRectangle, Person, PersonDate, PersonId,
+    GraveRectangle, Person, PersonDate, PersonId, Tags,
 };
 
 const APPLICATION_ID: &str = "requiescat";
-const CURRENT_SCHEMA_VERSION: u32 = 3;
+const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 pub trait CemeteryRepository {
     fn load(&self) -> Result<Cemetery, PersistenceError>;
@@ -213,7 +213,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
 fn load_graves(connection: &Connection) -> Result<Vec<Grave>, PersistenceError> {
     let mut statement = connection.prepare(
         "
-        SELECT id, x, y, width, height, color, rotation_degrees, gps
+        SELECT id, x, y, width, height, color, rotation_degrees, gps, tags
         FROM graves
         ORDER BY id
         ",
@@ -228,6 +228,7 @@ fn load_graves(connection: &Connection) -> Result<Vec<Grave>, PersistenceError> 
             color: row.get(5)?,
             rotation_degrees: row.get(6)?,
             gps: row.get(7)?,
+            tags: row.get(8)?,
         })
     })?;
 
@@ -268,7 +269,7 @@ fn load_people(connection: &Connection) -> Result<Vec<Person>, PersistenceError>
     let mut statement = connection.prepare(
         "
         SELECT id, first_name, last_name, date_of_birth,
-               COALESCE(date_of_decease, ''), grave_id
+               COALESCE(date_of_decease, ''), grave_id, tags
         FROM persons
         ORDER BY id
         ",
@@ -281,6 +282,7 @@ fn load_people(connection: &Connection) -> Result<Vec<Person>, PersistenceError>
             date_of_birth: row.get(3)?,
             date_of_decease: row.get(4)?,
             grave_id: row.get(5)?,
+            tags: row.get(6)?,
         })
     })?;
 
@@ -296,12 +298,12 @@ fn insert_graves(
 ) -> Result<(), PersistenceError> {
     let mut statement = transaction.prepare(
         "
-        INSERT INTO graves (id, x, y, width, height, color, rotation_degrees, gps)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        INSERT INTO graves (id, x, y, width, height, color, rotation_degrees, gps, tags)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         ",
     )?;
 
-    for grave in cemetery.graves().iter().copied() {
+    for grave in cemetery.graves().iter().cloned() {
         let row = GraveRow::from(grave);
         statement.execute(params![
             row.id,
@@ -311,7 +313,8 @@ fn insert_graves(
             row.height,
             row.color,
             row.rotation_degrees,
-            row.gps
+            row.gps,
+            row.tags
         ])?;
     }
 
@@ -353,8 +356,8 @@ fn insert_people(
     let mut statement = transaction.prepare(
         "
         INSERT INTO persons (
-            id, first_name, last_name, date_of_birth, date_of_decease, grave_id
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            id, first_name, last_name, date_of_birth, date_of_decease, grave_id, tags
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
         ",
     )?;
 
@@ -368,7 +371,8 @@ fn insert_people(
             row.last_name,
             row.date_of_birth,
             date_of_decease,
-            row.grave_id
+            row.grave_id,
+            row.tags
         ])?;
     }
 
@@ -396,7 +400,8 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
             height REAL NOT NULL,
             color TEXT NOT NULL DEFAULT '#a61f28',
             rotation_degrees REAL NOT NULL DEFAULT 0,
-            gps TEXT
+            gps TEXT,
+            tags TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS persons (
@@ -405,7 +410,8 @@ fn initialize_schema(connection: &Connection) -> Result<(), PersistenceError> {
             last_name TEXT NOT NULL,
             date_of_birth TEXT NOT NULL,
             date_of_decease TEXT,
-            grave_id INTEGER REFERENCES graves(id) ON DELETE SET NULL
+            grave_id INTEGER REFERENCES graves(id) ON DELETE SET NULL,
+            tags TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS delimiters (
@@ -455,7 +461,7 @@ fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceErr
     validate_table_columns(connection, "requiescat_metadata", &["key", "value"])?;
     let version = schema_version(connection)?;
     let grave_columns = if version >= 3 {
-        &[
+        let columns = &[
             "id",
             "x",
             "y",
@@ -464,14 +470,27 @@ fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceErr
             "color",
             "rotation_degrees",
             "gps",
-        ][..]
+        ][..];
+        if version >= 4 {
+            &[
+                "id",
+                "x",
+                "y",
+                "width",
+                "height",
+                "color",
+                "rotation_degrees",
+                "gps",
+                "tags",
+            ][..]
+        } else {
+            columns
+        }
     } else {
         &["id", "x", "y", "width", "height", "color", "gps"][..]
     };
     validate_table_columns(connection, "graves", grave_columns)?;
-    validate_table_columns(
-        connection,
-        "persons",
+    let person_columns = if version >= 4 {
         &[
             "id",
             "first_name",
@@ -479,8 +498,19 @@ fn validate_current_schema(connection: &Connection) -> Result<(), PersistenceErr
             "date_of_birth",
             "date_of_decease",
             "grave_id",
-        ],
-    )?;
+            "tags",
+        ][..]
+    } else {
+        &[
+            "id",
+            "first_name",
+            "last_name",
+            "date_of_birth",
+            "date_of_decease",
+            "grave_id",
+        ][..]
+    };
+    validate_table_columns(connection, "persons", person_columns)?;
     validate_table_columns(
         connection,
         "requiescat_migrations",
@@ -557,6 +587,18 @@ fn migrate_schema(connection: &Connection) -> Result<(), PersistenceError> {
             ",
         )?;
         version = 3;
+    }
+
+    if version < 4 {
+        connection.execute_batch(
+            "
+            ALTER TABLE graves ADD COLUMN tags TEXT NOT NULL DEFAULT '';
+            ALTER TABLE persons ADD COLUMN tags TEXT NOT NULL DEFAULT '';
+            INSERT OR IGNORE INTO requiescat_migrations (version) VALUES (4);
+            UPDATE requiescat_metadata SET value = '4' WHERE key = 'schema_version';
+            ",
+        )?;
+        version = 4;
     }
 
     if version > CURRENT_SCHEMA_VERSION {
@@ -639,6 +681,7 @@ struct GraveRow {
     color: String,
     rotation_degrees: f32,
     gps: Option<String>,
+    tags: String,
 }
 
 #[derive(Debug, Clone)]
@@ -661,6 +704,7 @@ struct PersonRow {
     date_of_birth: String,
     date_of_decease: String,
     grave_id: Option<i64>,
+    tags: String,
 }
 
 impl From<Delimiter> for DelimiterRow {
@@ -721,6 +765,7 @@ impl From<Grave> for GraveRow {
             color: grave.color().to_hex(),
             rotation_degrees: grave.rotation_degrees(),
             gps: grave.gps().map(|gps| gps.to_string()),
+            tags: grave.tags_text(),
         }
     }
 }
@@ -751,6 +796,7 @@ impl TryFrom<GraveRow> for Grave {
             GraveColor::from_hex(&row.color).unwrap_or_default(),
             row.rotation_degrees,
             gps,
+            Tags::parse(&row.tags),
         ))
     }
 }
@@ -764,6 +810,7 @@ impl From<&Person> for PersonRow {
             date_of_birth: person.date_of_birth().to_owned(),
             date_of_decease: person.date_of_decease_text().to_owned(),
             grave_id: person.grave_id().map(GraveId::value),
+            tags: person.tags_text(),
         }
     }
 }
@@ -796,6 +843,7 @@ impl TryFrom<PersonRow> for Person {
             date_of_birth,
             date_of_decease,
             row.grave_id.map(GraveId::new),
+            Tags::parse(&row.tags),
         ))
     }
 }
@@ -1193,6 +1241,7 @@ mod tests {
         );
         let grave_gps = GraveGps::parse("51° 30′ 26.64″ N, 0° 7′ 40.08″ W").unwrap();
         cemetery.update_grave_gps(grave_id, Some(grave_gps));
+        cemetery.update_grave_tags(grave_id, Tags::parse("family plot, row three"));
         cemetery.rotate_grave(grave_id, 45.0);
         let delimiter_id = cemetery.add_delimiter_with_color_and_type(
             GraveRectangle::from_top_left_size(Point::new(2.0, 4.0), Size::new(200.0, 20.0)),
@@ -1206,6 +1255,7 @@ mod tests {
             PersonDate::parse("10-12-1815").unwrap(),
             Some(PersonDate::parse("27-11-1852").unwrap()),
             Some(grave_id),
+            Tags::parse("mathematician, first programmer"),
         );
 
         let repository = SqliteCemeteryRepository::new(path.clone());
@@ -1222,8 +1272,13 @@ mod tests {
             loaded.grave(grave_id).map(Grave::rotation_degrees),
             Some(45.0)
         );
+        assert_eq!(
+            loaded.grave(grave_id).map(Grave::tags_text),
+            Some("family plot, row three".to_owned())
+        );
         assert_eq!(loaded.search_people("").len(), 1);
         assert_eq!(loaded.search_people("Ada")[0].grave_id(), Some(grave_id));
+        assert_eq!(loaded.search_people("first programmer").len(), 1);
         assert_eq!(loaded.delimiters().len(), 1);
         assert_eq!(loaded.delimiters()[0].delimiter_type(), DelimiterType::Road);
         assert_eq!(loaded.delimiters()[0].rotation_degrees(), 90.0);
@@ -1244,6 +1299,7 @@ mod tests {
                 PersonDate::parse("09-12-1906").unwrap(),
                 None,
                 None,
+                Tags::default(),
             ),
             PersonId::new(2)
         );

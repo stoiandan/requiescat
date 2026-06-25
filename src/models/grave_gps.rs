@@ -32,7 +32,10 @@ pub enum GraveGpsParseError {
 impl GraveGps {
     pub fn parse(value: &str) -> Result<Self, GraveGpsParseError> {
         let (latitude, longitude) = value.split_once(',').ok_or(GraveGpsParseError::Format)?;
+        Self::parse_parts(latitude, longitude)
+    }
 
+    pub fn parse_parts(latitude: &str, longitude: &str) -> Result<Self, GraveGpsParseError> {
         let latitude = DmsCoordinate::parse(latitude, CoordinateAxis::Latitude)
             .map_err(|_| GraveGpsParseError::Latitude)?;
         let longitude = DmsCoordinate::parse(longitude, CoordinateAxis::Longitude)
@@ -42,6 +45,14 @@ impl GraveGps {
             latitude,
             longitude,
         })
+    }
+
+    pub fn latitude_text(&self) -> String {
+        self.latitude.to_string()
+    }
+
+    pub fn longitude_text(&self) -> String {
+        self.longitude.to_string()
     }
 }
 

@@ -69,7 +69,7 @@ mod tests {
 
     use iced::{Point, Size};
 
-    use crate::models::{Cemetery, GraveColor, GraveRectangle, PersonDate};
+    use crate::models::{Cemetery, GraveColor, GraveRectangle, PersonDate, Tags};
 
     use super::*;
 
@@ -95,6 +95,7 @@ mod tests {
             PersonDate::parse("10-12-1815").unwrap(),
             None,
             Some(grave_id),
+            Tags::default(),
         );
 
         let path = std::env::temp_dir().join("requiescat-map-export-test.pdf");

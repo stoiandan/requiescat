@@ -1,19 +1,7 @@
 use iced::widget::{button, column, container, opaque, row, stack, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme, Vector};
 
-const BACKDROP: Color = Color {
-    r: 0.0,
-    g: 0.0,
-    b: 0.0,
-    a: 0.45,
-};
-const PANEL: Color = Color::from_rgb(0.055, 0.17, 0.18);
-const PANEL_RAISED: Color = Color::from_rgb(0.075, 0.225, 0.235);
-const DANGER: Color = Color::from_rgb(0.82, 0.22, 0.20);
-const DANGER_HOVER: Color = Color::from_rgb(0.95, 0.31, 0.28);
-const TEXT_PRIMARY: Color = Color::from_rgb(0.94, 0.98, 0.97);
-const TEXT_MUTED: Color = Color::from_rgb(0.65, 0.77, 0.75);
-const BORDER_COLOR: Color = Color::from_rgb(0.12, 0.36, 0.37);
+use crate::theme;
 
 pub struct ConfirmationDialog<Message> {
     title: String,
@@ -49,8 +37,11 @@ impl<Message: Clone + 'static> ConfirmationDialog<Message> {
         let dialog = container(
             column![
                 column![
-                    text(self.title).size(20).color(TEXT_PRIMARY),
-                    text(self.body).size(13).line_height(1.35).color(TEXT_MUTED)
+                    text(self.title).size(20).color(theme::TEXT_PRIMARY),
+                    text(self.body)
+                        .size(13)
+                        .line_height(1.35)
+                        .color(theme::TEXT_MUTED)
                 ]
                 .spacing(8),
                 row![
@@ -72,14 +63,14 @@ impl<Message: Clone + 'static> ConfirmationDialog<Message> {
         .max_width(400)
         .padding(24)
         .style(|_| container::Style {
-            background: Some(Background::Color(PANEL)),
+            background: Some(Background::Color(theme::SURFACE_ALT)),
             border: Border {
-                color: BORDER_COLOR,
+                color: theme::BORDER,
                 width: 1.0,
                 radius: 12.0.into(),
             },
             shadow: Shadow {
-                color: Color::from_rgba8(0, 0, 0, 0.35),
+                color: theme::SHADOW,
                 offset: Vector::new(0.0, 8.0),
                 blur_radius: 24.0,
             },
@@ -92,7 +83,7 @@ impl<Message: Clone + 'static> ConfirmationDialog<Message> {
             .center(Length::Fill)
             .padding(24)
             .style(|_| container::Style {
-                background: Some(Background::Color(BACKDROP)),
+                background: Some(Background::Color(theme::OVERLAY_BACKDROP)),
                 ..Default::default()
             });
 
@@ -103,14 +94,14 @@ impl<Message: Clone + 'static> ConfirmationDialog<Message> {
 fn secondary_button_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(match status {
-            button::Status::Hovered => PANEL_RAISED,
-            button::Status::Pressed => Color::from_rgb(0.06, 0.19, 0.20),
-            button::Status::Disabled => Color::from_rgb(0.045, 0.14, 0.145),
-            button::Status::Active => Color::from_rgb(0.06, 0.20, 0.205),
+            button::Status::Hovered => theme::SURFACE_HOVER,
+            button::Status::Pressed => theme::SURFACE_ALT,
+            button::Status::Disabled => theme::SURFACE,
+            button::Status::Active => theme::SURFACE_RAISED,
         })),
-        text_color: TEXT_PRIMARY,
+        text_color: theme::TEXT_PRIMARY,
         border: Border {
-            color: BORDER_COLOR,
+            color: theme::BORDER,
             width: 1.0,
             radius: 9.0.into(),
         },
@@ -121,10 +112,10 @@ fn secondary_button_style(_: &Theme, status: button::Status) -> button::Style {
 fn danger_button_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(match status {
-            button::Status::Hovered => DANGER_HOVER,
-            button::Status::Pressed => Color::from_rgb(0.64, 0.16, 0.15),
-            button::Status::Disabled => Color::from_rgb(0.28, 0.14, 0.14),
-            button::Status::Active => DANGER,
+            button::Status::Hovered => theme::DANGER_HOVER,
+            button::Status::Pressed => theme::DANGER_PRESSED,
+            button::Status::Disabled => theme::DANGER_DISABLED,
+            button::Status::Active => theme::DANGER,
         })),
         text_color: Color::WHITE,
         border: Border {

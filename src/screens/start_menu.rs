@@ -6,15 +6,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 use crate::localization::{Localizer, MessageId};
 use crate::persistence::CemeteryFile;
 use crate::screens::ConfirmationDialog;
-
-const BACKGROUND: Color = Color::from_rgb(0.035, 0.105, 0.11);
-const PANEL: Color = Color::from_rgb(0.055, 0.17, 0.18);
-const PANEL_RAISED: Color = Color::from_rgb(0.075, 0.225, 0.235);
-const ACCENT: Color = Color::from_rgb(0.22, 0.76, 0.70);
-const ACCENT_DARK: Color = Color::from_rgb(0.08, 0.43, 0.42);
-const TEXT_PRIMARY: Color = Color::from_rgb(0.94, 0.98, 0.97);
-const TEXT_MUTED: Color = Color::from_rgb(0.65, 0.77, 0.75);
-const BORDER_COLOR: Color = Color::from_rgb(0.12, 0.36, 0.37);
+use crate::theme;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -106,7 +98,7 @@ fn landing_page<'a>(localizer: &'a Localizer, state: &ViewState<'a>) -> Element<
 
     let actions = container(
         column![
-            text(heading).size(24).color(TEXT_PRIMARY),
+            text(heading).size(24).color(theme::TEXT_PRIMARY),
             action_buttons,
             status_view(state.status.clone())
         ]
@@ -170,10 +162,10 @@ fn create_cemetery_form<'a>(
         column![
             text(localizer.text(MessageId::CreateNewCemetery))
                 .size(24)
-                .color(TEXT_PRIMARY),
+                .color(theme::TEXT_PRIMARY),
             text(localizer.text(MessageId::CreateCemeteryDescription))
                 .size(13)
-                .color(TEXT_MUTED)
+                .color(theme::TEXT_MUTED)
         ]
         .spacing(6),
         text_input(&localizer.text(MessageId::CemeteryName), name)
@@ -214,10 +206,10 @@ fn cemetery_list<'a>(
         column![
             text(localizer.text(MessageId::CemeteryLibrary))
                 .size(22)
-                .color(TEXT_PRIMARY),
+                .color(theme::TEXT_PRIMARY),
             text(localizer.text(MessageId::ChooseCemetery))
                 .size(13)
-                .color(TEXT_MUTED)
+                .color(theme::TEXT_MUTED)
         ]
         .spacing(4)
     ]
@@ -232,7 +224,7 @@ fn cemetery_list<'a>(
                 column![
                     text(localizer.text(MessageId::NoCemeteries))
                         .size(18)
-                        .color(TEXT_PRIMARY)
+                        .color(theme::TEXT_PRIMARY)
                 ]
                 .spacing(12)
                 .align_x(Alignment::Center),
@@ -240,9 +232,9 @@ fn cemetery_list<'a>(
             .width(Length::Fill)
             .padding(32)
             .style(|_| container::Style {
-                background: Some(Background::Color(PANEL)),
+                background: Some(Background::Color(theme::SURFACE_ALT)),
                 border: Border {
-                    color: BORDER_COLOR,
+                    color: theme::BORDER,
                     width: 1.0,
                     radius: 14.0.into(),
                 },
@@ -263,8 +255,8 @@ fn cemetery_list<'a>(
                 container(
                     row![
                         column![
-                            text(cemetery.name()).size(16).color(TEXT_PRIMARY),
-                            text(detail).size(12).color(TEXT_MUTED)
+                            text(cemetery.name()).size(16).color(theme::TEXT_PRIMARY),
+                            text(detail).size(12).color(theme::TEXT_MUTED)
                         ]
                         .spacing(3)
                         .width(Length::Fill),
@@ -283,15 +275,15 @@ fn cemetery_list<'a>(
                 .padding([11, 14])
                 .style(move |_| container::Style {
                     background: Some(Background::Color(if is_selected {
-                        Color::from_rgb(0.065, 0.20, 0.205)
+                        theme::SURFACE_RAISED
                     } else {
-                        PANEL
+                        theme::SURFACE_ALT
                     })),
                     border: Border {
                         color: if is_selected {
-                            ACCENT_DARK
+                            theme::ACCENT_DARK
                         } else {
-                            BORDER_COLOR
+                            theme::BORDER
                         },
                         width: 1.0,
                         radius: 9.0.into(),
@@ -340,13 +332,13 @@ fn menu_button<'a>(
 
 fn status_view<'a>(status: Option<String>) -> Element<'a, Message> {
     match status {
-        Some(status) => container(text(status).size(12).color(TEXT_MUTED))
+        Some(status) => container(text(status).size(12).color(theme::TEXT_MUTED))
             .width(Length::Fill)
             .padding([9, 12])
             .style(|_| container::Style {
-                background: Some(Background::Color(Color::from_rgb(0.04, 0.14, 0.145))),
+                background: Some(Background::Color(theme::SURFACE)),
                 border: Border {
-                    color: BORDER_COLOR,
+                    color: theme::BORDER,
                     width: 1.0,
                     radius: 9.0.into(),
                 },
@@ -369,7 +361,7 @@ fn screen<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> 
     .padding(24)
     .center(Length::Fill)
     .style(|_| container::Style {
-        background: Some(Background::Color(BACKGROUND)),
+        background: Some(Background::Color(theme::BACKGROUND)),
         ..Default::default()
     })
     .into()
@@ -377,9 +369,9 @@ fn screen<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> 
 
 fn panel_style(radius: f32) -> container::Style {
     container::Style {
-        background: Some(Background::Color(PANEL)),
+        background: Some(Background::Color(theme::SURFACE_ALT)),
         border: Border {
-            color: BORDER_COLOR,
+            color: theme::BORDER,
             width: 1.0,
             radius: radius.into(),
         },
@@ -389,18 +381,18 @@ fn panel_style(radius: f32) -> container::Style {
 
 fn primary_button_style(_: &Theme, status: button::Status) -> button::Style {
     let background = match status {
-        button::Status::Hovered => Color::from_rgb(0.30, 0.84, 0.77),
-        button::Status::Pressed => Color::from_rgb(0.17, 0.64, 0.59),
-        button::Status::Disabled => Color::from_rgb(0.12, 0.26, 0.26),
-        button::Status::Active => ACCENT,
+        button::Status::Hovered => theme::ACCENT_HOVER,
+        button::Status::Pressed => theme::ACCENT_PRESSED,
+        button::Status::Disabled => theme::ACCENT_REST,
+        button::Status::Active => theme::ACCENT,
     };
 
     button::Style {
         background: Some(Background::Color(background)),
         text_color: if status == button::Status::Disabled {
-            Color::from_rgb(0.40, 0.51, 0.50)
+            theme::TEXT_DISABLED
         } else {
-            BACKGROUND
+            theme::BACKGROUND
         },
         border: Border {
             radius: 10.0.into(),
@@ -412,24 +404,24 @@ fn primary_button_style(_: &Theme, status: button::Status) -> button::Style {
 
 fn secondary_button_style(_: &Theme, status: button::Status) -> button::Style {
     let background = match status {
-        button::Status::Hovered => PANEL_RAISED,
-        button::Status::Pressed => Color::from_rgb(0.06, 0.19, 0.20),
-        button::Status::Disabled => Color::from_rgb(0.045, 0.14, 0.145),
-        button::Status::Active => Color::from_rgb(0.06, 0.20, 0.205),
+        button::Status::Hovered => theme::SURFACE_HOVER,
+        button::Status::Pressed => theme::SURFACE_ALT,
+        button::Status::Disabled => theme::SURFACE,
+        button::Status::Active => theme::SURFACE_RAISED,
     };
 
     button::Style {
         background: Some(Background::Color(background)),
         text_color: if status == button::Status::Disabled {
-            Color::from_rgb(0.37, 0.48, 0.47)
+            theme::TEXT_DISABLED
         } else {
-            TEXT_PRIMARY
+            theme::TEXT_PRIMARY
         },
         border: Border {
             color: if status == button::Status::Hovered {
-                ACCENT_DARK
+                theme::ACCENT_DARK
             } else {
-                BORDER_COLOR
+                theme::BORDER
             },
             width: 1.0,
             radius: 10.0.into(),
@@ -441,13 +433,13 @@ fn secondary_button_style(_: &Theme, status: button::Status) -> button::Style {
 fn quiet_button_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(if status == button::Status::Hovered {
-            PANEL_RAISED
+            theme::SURFACE_HOVER
         } else {
             Color::TRANSPARENT
         })),
-        text_color: TEXT_PRIMARY,
+        text_color: theme::TEXT_PRIMARY,
         border: Border {
-            color: BORDER_COLOR,
+            color: theme::BORDER,
             width: 1.0,
             radius: 10.0.into(),
         },
@@ -458,14 +450,14 @@ fn quiet_button_style(_: &Theme, status: button::Status) -> button::Style {
 fn danger_outline_button_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(match status {
-            button::Status::Hovered => Color::from_rgb(0.24, 0.10, 0.10),
-            button::Status::Pressed => Color::from_rgb(0.34, 0.11, 0.10),
-            button::Status::Disabled => Color::from_rgb(0.08, 0.06, 0.06),
-            button::Status::Active => Color::from_rgb(0.14, 0.07, 0.07),
+            button::Status::Hovered => theme::DANGER_DARK_HOVER,
+            button::Status::Pressed => theme::DANGER_DARK_PRESSED,
+            button::Status::Disabled => theme::SURFACE,
+            button::Status::Active => theme::DANGER_DARK,
         })),
-        text_color: Color::from_rgb(1.0, 0.76, 0.73),
+        text_color: theme::TEXT_DANGER,
         border: Border {
-            color: Color::from_rgb(0.70, 0.25, 0.23),
+            color: theme::DANGER_HOVER,
             width: 1.0,
             radius: 10.0.into(),
         },

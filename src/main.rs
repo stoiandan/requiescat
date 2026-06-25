@@ -17,6 +17,7 @@ use requiescat::screens::{
     MapEditor, MapEditorMessage, MapEditorUpdateOutcome, StartMenuMessage, StartMenuViewState,
     start_menu_view,
 };
+use requiescat::theme;
 
 fn main() -> iced::Result {
     if std::env::args_os().any(|argument| argument == "--version") {
@@ -34,6 +35,7 @@ fn main() -> iced::Result {
 enum Message {
     MainWindowOpened(window::Id),
     PersonDirectoryOpened(window::Id),
+    GraveDirectoryOpened(window::Id),
     PersonDetailsOpened(window::Id, PersonId),
     NewPersonWindowOpened(window::Id),
     WindowClosed(window::Id),
@@ -42,6 +44,7 @@ enum Message {
     ToggleAppMenu(AppMenu),
     NewPerson,
     OpenPersonDirectory,
+    OpenGraveDirectory,
     DuplicateLastGrave,
     ExportActiveCemetery,
     ExportActiveCemeteryPdf,
@@ -73,6 +76,7 @@ enum AppMenu {
 struct OpenWindows {
     main: Option<window::Id>,
     person_directory: Option<window::Id>,
+    grave_directory: Option<window::Id>,
     person_details: Vec<(window::Id, PersonId)>,
     new_person: Option<window::Id>,
 }
@@ -126,6 +130,7 @@ impl OpenWindows {
     fn without_window(&self, id: window::Id) -> Self {
         Self {
             person_directory: self.person_directory.filter(|window| *window != id),
+            grave_directory: self.grave_directory.filter(|window| *window != id),
             new_person: self.new_person.filter(|window| *window != id),
             person_details: self
                 .person_details
@@ -411,6 +416,9 @@ impl Requiescat {
             Message::PersonDirectoryOpened(id) => {
                 self.windows.person_directory = Some(id);
             }
+            Message::GraveDirectoryOpened(id) => {
+                self.windows.grave_directory = Some(id);
+            }
             Message::PersonDetailsOpened(id, person_id) => {
                 self.windows = self.windows.with_person_details(id, person_id);
             }
@@ -423,6 +431,10 @@ impl Requiescat {
                         self.save_active_cemetery();
                     }
                     return iced::exit();
+                }
+
+                if self.windows.grave_directory == Some(id) {
+                    self.editor.clear_grave_search();
                 }
 
                 self.windows = self.windows.without_window(id);
@@ -438,6 +450,10 @@ impl Requiescat {
 
                 if is_command_shortcut(&event, 'p') {
                     return self.open_person_directory();
+                }
+
+                if is_command_shortcut(&event, 'g') {
+                    return self.open_grave_directory();
                 }
 
                 if is_command_shortcut(&event, 'd') {
@@ -464,6 +480,9 @@ impl Requiescat {
             }
             Message::OpenPersonDirectory => {
                 return self.run_map_editor_menu_action(Self::open_person_directory);
+            }
+            Message::OpenGraveDirectory => {
+                return self.run_map_editor_menu_action(Self::open_grave_directory);
             }
             Message::DuplicateLastGrave => {
                 return self.run_map_editor_menu_action(|app| {
@@ -541,6 +560,10 @@ impl Requiescat {
             self.editor
                 .person_directory_view(&self.localizer)
                 .map(Message::Editor)
+        } else if Some(window) == self.windows.grave_directory {
+            self.editor
+                .grave_directory_view(&self.localizer)
+                .map(Message::Editor)
         } else if Some(window) == self.windows.new_person {
             self.editor
                 .new_person_view(&self.localizer)
@@ -596,6 +619,8 @@ impl Requiescat {
     fn title(&self, window: window::Id) -> String {
         if Some(window) == self.windows.person_directory {
             self.localizer.text(MessageId::PersonDirectoryTitle)
+        } else if Some(window) == self.windows.grave_directory {
+            self.localizer.text(MessageId::GraveDirectoryTitle)
         } else if Some(window) == self.windows.new_person {
             self.localizer.text(MessageId::NewPersonTitle)
         } else if self.windows.person_detail_for_window(window).is_some() {
@@ -702,11 +727,18 @@ impl Requiescat {
             Message::DuplicateLastGrave,
             self.editor.can_duplicate_last_grave(),
         )];
-        const VIEW_ACTIONS: &[(MessageId, Message, bool)] = &[(
-            MessageId::AppMenuPersonDirectory,
-            Message::OpenPersonDirectory,
-            true,
-        )];
+        const VIEW_ACTIONS: &[(MessageId, Message, bool)] = &[
+            (
+                MessageId::AppMenuPersonDirectory,
+                Message::OpenPersonDirectory,
+                true,
+            ),
+            (
+                MessageId::AppMenuGraveDirectory,
+                Message::OpenGraveDirectory,
+                true,
+            ),
+        ];
 
         let mut items = column![]
             .spacing(1)
@@ -780,6 +812,22 @@ impl Requiescat {
         self.windows.person_directory = Some(id);
 
         open.map(Message::PersonDirectoryOpened)
+    }
+
+    fn open_grave_directory(&mut self) -> Task<Message> {
+        if let Some(id) = self.windows.grave_directory {
+            return window::gain_focus(id);
+        }
+
+        let (id, open) = window::open(window::Settings {
+            size: Size::new(460.0, 700.0),
+            min_size: Some(Size::new(360.0, 420.0)),
+            ..Default::default()
+        });
+
+        self.windows.grave_directory = Some(id);
+
+        open.map(Message::GraveDirectoryOpened)
     }
 
     fn open_person_details(&mut self, person_id: PersonId) -> Task<Message> {
@@ -1117,9 +1165,9 @@ fn is_command_shortcut(event: &keyboard::Event, character: char) -> bool {
 
 fn app_menu_bar(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(10, 35, 38))),
+        background: Some(Background::Color(theme::BACKGROUND)),
         border: Border {
-            color: Color::from_rgb8(45, 112, 116),
+            color: theme::BORDER_SUBTLE,
             width: 0.0,
             radius: 0.0.into(),
         },
@@ -1129,14 +1177,14 @@ fn app_menu_bar(_: &Theme) -> container::Style {
 
 fn app_menu_dropdown(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(14, 45, 49))),
+        background: Some(Background::Color(theme::SURFACE_ALT)),
         border: Border {
-            color: Color::from_rgb8(83, 151, 153),
+            color: theme::BORDER,
             width: 1.0,
             radius: 4.0.into(),
         },
         shadow: Shadow {
-            color: Color::from_rgba8(0, 0, 0, 0.4),
+            color: theme::HEAVY_SHADOW,
             offset: Vector::new(0.0, 4.0),
             blur_radius: 10.0,
         },
@@ -1150,13 +1198,13 @@ fn app_menu_title_button(_: &Theme, status: button::Status, active: bool) -> but
 
     button::Style {
         background: if active || pressed {
-            Some(Background::Color(Color::from_rgb8(31, 92, 96)))
+            Some(Background::Color(theme::ACCENT_DARK))
         } else if hovered {
-            Some(Background::Color(Color::from_rgb8(22, 64, 68)))
+            Some(Background::Color(theme::ACCENT_REST))
         } else {
             None
         },
-        text_color: Color::WHITE,
+        text_color: theme::TEXT_PRIMARY,
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
@@ -1173,16 +1221,16 @@ fn app_menu_item_button(_: &Theme, status: button::Status) -> button::Style {
 
     button::Style {
         background: if pressed {
-            Some(Background::Color(Color::from_rgb8(35, 112, 116)))
+            Some(Background::Color(theme::ACCENT_ACTIVE))
         } else if hovered && !disabled {
-            Some(Background::Color(Color::from_rgb8(29, 91, 96)))
+            Some(Background::Color(theme::ACCENT_REST))
         } else {
             None
         },
         text_color: if disabled {
-            Color::from_rgb8(107, 146, 148)
+            theme::TEXT_DISABLED
         } else {
-            Color::WHITE
+            theme::TEXT_PRIMARY
         },
         border: Border {
             color: Color::TRANSPARENT,

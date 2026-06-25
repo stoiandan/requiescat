@@ -125,6 +125,7 @@ impl canvas::Program<Message> for LocalizedMapCanvas<'_> {
                 &self.editor.camera(),
                 bounds,
                 self.editor.selected_grave(),
+                &self.editor.highlighted_graves(),
                 |grave_id| {
                     self.localizer
                         .value(MessageId::GraveCanvas, "grave", grave_id.to_string())

@@ -8,6 +8,7 @@ use super::map_canvas::CanvasState;
 use super::map_editor::MapEditor;
 use crate::label_layout;
 use crate::models::{Cemetery, GraveId, GraveRectangle};
+use crate::theme;
 
 pub fn grid(frame: &mut canvas::Frame, camera: &Camera, bounds: Rectangle) {
     const SQUARE_SIZE: f32 = 50.0;
@@ -111,7 +112,7 @@ pub fn rotation_handles(frame: &mut canvas::Frame, editor: &MapEditor) {
         frame.stroke(
             &dot,
             canvas::Stroke::default()
-                .with_color(iced::Color::from_rgb8(16, 132, 122))
+                .with_color(theme::ACCENT_ACTIVE)
                 .with_width(2.0),
         );
     }
@@ -123,6 +124,7 @@ pub fn graves(
     camera: &Camera,
     bounds: Rectangle,
     selected_grave: Option<GraveId>,
+    highlighted_graves: &[GraveId],
     grave_label: impl Fn(GraveId) -> String,
 ) {
     let visible_graves = cemetery
@@ -156,11 +158,17 @@ pub fn graves(
             camera,
         );
 
-        if Some(grave_id) == selected_grave {
+        if Some(grave_id) == selected_grave || highlighted_graves.contains(&grave_id) {
             frame.stroke(
                 &path,
                 canvas::Stroke::default()
-                    .with_color(iced::Color::from_rgb8(151, 255, 244))
+                    .with_color(iced::Color::from_rgba8(2, 14, 16, 0.85))
+                    .with_width(6.0),
+            );
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_color(theme::BORDER_BRIGHT)
                     .with_width(3.0),
             );
         }

@@ -1,4 +1,4 @@
-use super::{GraveId, Person, PersonDate, PersonId};
+use super::{GraveId, Person, PersonDate, PersonId, Tags};
 
 #[derive(Debug, Clone, Default)]
 pub struct PersonDirectory {
@@ -27,6 +27,7 @@ impl PersonDirectory {
         date_of_birth: PersonDate,
         date_of_decease: Option<PersonDate>,
         grave_id: Option<GraveId>,
+        tags: Tags,
     ) -> PersonId {
         let id = self.next_id();
 
@@ -37,6 +38,7 @@ impl PersonDirectory {
             date_of_birth,
             date_of_decease,
             grave_id,
+            tags,
         ));
 
         id
@@ -119,6 +121,7 @@ mod tests {
             PersonDate::parse("10-12-1815").unwrap(),
             None,
             grave_id,
+            Tags::default(),
         )
     }
 

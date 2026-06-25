@@ -1,8 +1,21 @@
-use iced::widget::{Space, button, column, container, row, text, tooltip};
+use iced::widget::{Space, button, column, container, row, svg, text, tooltip};
 use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
 
 use crate::localization::{Localizer, MessageId};
 use crate::models::{DelimiterType, GraveColor};
+use crate::theme;
+
+#[derive(Debug, Clone, Copy)]
+enum ToolbarIcon {
+    Select,
+    Draw,
+    StampGrave,
+    DelimiterWall,
+    DelimiterRoad,
+    Grab,
+    Grid,
+    Erase,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tool {
@@ -50,19 +63,19 @@ impl Toolbar {
     pub fn view<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, ToolbarAction> {
         let tools = row![
             tool_button(
-                "ⓘ",
+                ToolbarIcon::Select,
                 ToolbarAction::SelectTool(Tool::Select),
                 self.selected_tool == Tool::Select,
                 localizer.text(MessageId::ToolSelect),
             ),
             tool_button(
-                "🖌",
+                ToolbarIcon::Draw,
                 ToolbarAction::SelectTool(Tool::Draw),
                 self.selected_tool == Tool::Draw,
                 localizer.text(MessageId::ToolDraw),
             ),
             tool_button(
-                "▯",
+                ToolbarIcon::StampGrave,
                 ToolbarAction::SelectTool(Tool::StampGrave),
                 self.selected_tool == Tool::StampGrave,
                 localizer.text(MessageId::ToolStampGrave),
@@ -73,19 +86,19 @@ impl Toolbar {
                 localizer.text(MessageId::ToolDelimiter),
             ),
             tool_button(
-                "✋",
+                ToolbarIcon::Grab,
                 ToolbarAction::SelectTool(Tool::Grab),
                 self.selected_tool == Tool::Grab,
                 localizer.text(MessageId::ToolGrab),
             ),
             tool_button(
-                "#",
+                ToolbarIcon::Grid,
                 ToolbarAction::ToggleGrid,
                 self.show_grid,
                 localizer.text(MessageId::ToolGrid),
             ),
             tool_button(
-                "❌",
+                ToolbarIcon::Erase,
                 ToolbarAction::SelectTool(Tool::Erase),
                 self.selected_tool == Tool::Erase,
                 localizer.text(MessageId::ToolErase),
@@ -129,14 +142,14 @@ impl Toolbar {
         let panel = container(content)
             .padding([10, 14])
             .style(|_| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(20, 64, 68))),
+                background: Some(Background::Color(theme::SURFACE_ALT)),
                 border: Border {
-                    color: Color::from_rgb8(42, 139, 143),
+                    color: theme::BORDER,
                     width: 1.0,
                     radius: 4.0.into(),
                 },
                 shadow: Shadow {
-                    color: Color::from_rgba8(0, 0, 0, 0.35),
+                    color: theme::SHADOW,
                     offset: Vector::new(0.0, -2.0),
                     blur_radius: 4.0,
                 },
@@ -197,23 +210,18 @@ impl Toolbar {
 }
 
 fn tool_button(
-    icon: &'static str,
+    icon: ToolbarIcon,
     action: ToolbarAction,
     selected: bool,
     label: String,
 ) -> Element<'static, ToolbarAction> {
     tooltip_button(
-        button(
-            text(icon)
-                .size(22)
-                .align_x(iced::Alignment::Center)
-                .align_y(iced::Alignment::Center),
-        )
-        .width(44)
-        .height(44)
-        .padding(0)
-        .on_press(action)
-        .style(move |_, status| teal_button_style(status, selected, 3.0)),
+        button(toolbar_icon(icon))
+            .width(44)
+            .height(44)
+            .padding(0)
+            .on_press(action)
+            .style(move |_, status| teal_button_style(status, selected, 3.0)),
         label,
     )
 }
@@ -224,8 +232,8 @@ fn delimiter_tool_button(
     label: String,
 ) -> Element<'static, ToolbarAction> {
     let icon = match delimiter_type {
-        DelimiterType::Wall => "▧",
-        DelimiterType::Road => "⋯",
+        DelimiterType::Wall => ToolbarIcon::DelimiterWall,
+        DelimiterType::Road => ToolbarIcon::DelimiterRoad,
     };
 
     tool_button(
@@ -243,13 +251,13 @@ fn delimiter_type_palette(
 ) -> Element<'static, ToolbarAction> {
     let controls = row![
         delimiter_type_option(
-            "▧",
+            ToolbarIcon::DelimiterWall,
             DelimiterType::Wall,
             selected == DelimiterType::Wall,
             wall_label,
         ),
         delimiter_type_option(
-            "⋯",
+            ToolbarIcon::DelimiterRoad,
             DelimiterType::Road,
             selected == DelimiterType::Road,
             road_label,
@@ -264,23 +272,18 @@ fn delimiter_type_palette(
 }
 
 fn delimiter_type_option(
-    icon: &'static str,
+    icon: ToolbarIcon,
     delimiter_type: DelimiterType,
     selected: bool,
     label: String,
 ) -> Element<'static, ToolbarAction> {
     tooltip_button(
-        button(
-            text(icon)
-                .size(20)
-                .align_x(iced::Alignment::Center)
-                .align_y(iced::Alignment::Center),
-        )
-        .width(44)
-        .height(34)
-        .padding(0)
-        .on_press(ToolbarAction::SelectDelimiterType(delimiter_type))
-        .style(move |_, status| teal_button_style(status, selected, 2.0)),
+        button(toolbar_icon(icon))
+            .width(44)
+            .height(34)
+            .padding(0)
+            .on_press(ToolbarAction::SelectDelimiterType(delimiter_type))
+            .style(move |_, status| teal_button_style(status, selected, 2.0)),
         label,
     )
 }
@@ -326,6 +329,27 @@ fn color_swatch(
     )
 }
 
+fn toolbar_icon(icon: ToolbarIcon) -> Element<'static, ToolbarAction> {
+    let bytes: &'static [u8] = match icon {
+        ToolbarIcon::Select => include_bytes!("../../../assets/toolbar/select.svg"),
+        ToolbarIcon::Draw => include_bytes!("../../../assets/toolbar/draw.svg"),
+        ToolbarIcon::StampGrave => include_bytes!("../../../assets/toolbar/stamp-grave.svg"),
+        ToolbarIcon::DelimiterWall => include_bytes!("../../../assets/toolbar/delimiter-wall.svg"),
+        ToolbarIcon::DelimiterRoad => include_bytes!("../../../assets/toolbar/delimiter-road.svg"),
+        ToolbarIcon::Grab => include_bytes!("../../../assets/toolbar/grab.svg"),
+        ToolbarIcon::Grid => include_bytes!("../../../assets/toolbar/grid.svg"),
+        ToolbarIcon::Erase => include_bytes!("../../../assets/toolbar/erase.svg"),
+    };
+
+    svg(svg::Handle::from_memory(bytes))
+        .width(24)
+        .height(24)
+        .style(|_, _| svg::Style {
+            color: Some(theme::TEXT_PRIMARY),
+        })
+        .into()
+}
+
 fn tooltip_button(
     button: button::Button<'static, ToolbarAction>,
     label: String,
@@ -335,15 +359,15 @@ fn tooltip_button(
         container(text(label).size(12))
             .padding([6, 8])
             .style(|_| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(9, 31, 35))),
-                text_color: Some(Color::WHITE),
+                background: Some(Background::Color(theme::SURFACE)),
+                text_color: Some(theme::TEXT_PRIMARY),
                 border: Border {
-                    color: Color::from_rgb8(72, 164, 166),
+                    color: theme::BORDER,
                     width: 1.0,
                     radius: 4.0.into(),
                 },
                 shadow: Shadow {
-                    color: Color::from_rgba8(0, 0, 0, 0.35),
+                    color: theme::SHADOW,
                     offset: Vector::new(0.0, 2.0),
                     blur_radius: 4.0,
                 },
@@ -364,15 +388,15 @@ fn color_button_style(status: button::Status, color: GraveColor, selected: bool)
         text_color: Color::WHITE,
         border: Border {
             color: if selected || hovered || pressed {
-                Color::from_rgb8(231, 255, 250)
+                theme::BORDER_BRIGHT
             } else {
-                Color::from_rgb8(17, 78, 81)
+                theme::BORDER
             },
             width: if selected { 3.0 } else { 1.0 },
             radius: 4.0.into(),
         },
         shadow: Shadow {
-            color: Color::from_rgba8(0, 0, 0, 0.45),
+            color: theme::HEAVY_SHADOW,
             offset: if pressed {
                 Vector::new(0.0, 1.0)
             } else {
@@ -386,14 +410,14 @@ fn color_button_style(status: button::Status, color: GraveColor, selected: bool)
 
 fn picker_panel_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(12, 43, 47))),
+        background: Some(Background::Color(theme::SURFACE)),
         border: Border {
-            color: Color::from_rgb8(72, 164, 166),
+            color: theme::BORDER,
             width: 1.0,
             radius: 4.0.into(),
         },
         shadow: Shadow {
-            color: Color::from_rgba8(0, 0, 0, 0.35),
+            color: theme::SHADOW,
             offset: Vector::new(0.0, -2.0),
             blur_radius: 5.0,
         },
@@ -411,24 +435,24 @@ fn teal_button_style(
 
     button::Style {
         background: Some(Background::Color(if selected || pressed {
-            Color::from_rgb8(24, 117, 120)
+            theme::ACCENT_ACTIVE
         } else if hovered {
-            Color::from_rgb8(52, 151, 153)
+            theme::ACCENT_HOVER_DARK
         } else {
-            Color::from_rgb8(38, 126, 129)
+            theme::ACCENT_REST
         })),
-        text_color: Color::WHITE,
+        text_color: theme::TEXT_PRIMARY,
         border: Border {
             color: if selected {
-                Color::from_rgb8(151, 255, 244)
+                theme::BORDER_BRIGHT
             } else {
-                Color::from_rgb8(17, 78, 81)
+                theme::BORDER
             },
             width: if selected { 2.0 } else { 1.0 },
             radius: 4.0.into(),
         },
         shadow: Shadow {
-            color: Color::from_rgba8(0, 0, 0, 0.45),
+            color: theme::HEAVY_SHADOW,
             offset: if pressed {
                 Vector::new(0.0, 1.0)
             } else {

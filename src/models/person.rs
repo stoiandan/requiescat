@@ -1,4 +1,4 @@
-use super::{GraveId, PersonDate, PersonId};
+use super::{GraveId, PersonDate, PersonId, Tags};
 
 #[derive(Debug, Clone)]
 pub struct Person {
@@ -8,6 +8,7 @@ pub struct Person {
     date_of_birth: PersonDate,
     date_of_decease: Option<PersonDate>,
     grave_id: Option<GraveId>,
+    tags: Tags,
 }
 
 impl Person {
@@ -18,6 +19,7 @@ impl Person {
         date_of_birth: PersonDate,
         date_of_decease: Option<PersonDate>,
         grave_id: Option<GraveId>,
+        tags: Tags,
     ) -> Self {
         Self {
             id,
@@ -26,6 +28,7 @@ impl Person {
             date_of_birth,
             date_of_decease,
             grave_id,
+            tags,
         }
     }
 
@@ -56,6 +59,14 @@ impl Person {
         self.grave_id
     }
 
+    pub fn tags(&self) -> &Tags {
+        &self.tags
+    }
+
+    pub fn tags_text(&self) -> String {
+        self.tags.as_text()
+    }
+
     pub fn with_first_name(mut self, value: String) -> Self {
         self.first_name = value;
         self
@@ -73,6 +84,11 @@ impl Person {
 
     pub fn with_date_of_decease(mut self, value: Option<PersonDate>) -> Self {
         self.date_of_decease = value;
+        self
+    }
+
+    pub fn with_tags(mut self, value: Tags) -> Self {
+        self.tags = value;
         self
     }
 
@@ -101,6 +117,7 @@ impl Person {
             || self.last_name.to_lowercase().contains(&query)
             || self.date_of_birth.as_str().to_lowercase().contains(&query)
             || self.date_of_decease_text().to_lowercase().contains(&query)
+            || self.tags.matches_query(&query)
     }
 }
 
@@ -117,6 +134,7 @@ mod tests {
             PersonDate::parse("10-12-1815").unwrap(),
             None,
             None,
+            Tags::default(),
         );
 
         assert_eq!(person.display_name(), "Ada Lovelace");
@@ -131,6 +149,7 @@ mod tests {
             PersonDate::parse("10-12-1815").unwrap(),
             Some(PersonDate::parse("27-11-1852").unwrap()),
             None,
+            Tags::default(),
         );
 
         assert!(person.matches_query(""));
@@ -151,6 +170,7 @@ mod tests {
             PersonDate::parse("10-12-1815").unwrap(),
             None,
             None,
+            Tags::default(),
         );
         let grave_id = GraveId::new(7);
 

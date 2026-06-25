@@ -2,6 +2,7 @@ use iced::Vector;
 
 use super::{
     Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveGps, GraveId, GraveRectangle,
+    Tags,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -96,6 +97,10 @@ impl CemeteryMap {
         self.update_grave(id, |grave| grave.with_gps(gps))
     }
 
+    pub fn update_grave_tags(&mut self, id: GraveId, tags: Tags) -> bool {
+        self.update_grave(id, |grave| grave.with_tags(tags))
+    }
+
     pub fn grave_at(&self, point: iced::Point) -> Option<GraveId> {
         self.graves
             .iter()
@@ -114,6 +119,13 @@ impl CemeteryMap {
 
     pub fn graves(&self) -> &[Grave] {
         &self.graves
+    }
+
+    pub fn search_graves(&self, query: &str) -> Vec<&Grave> {
+        self.graves
+            .iter()
+            .filter(|grave| grave.matches_tag_query(query))
+            .collect()
     }
 
     pub fn delimiters(&self) -> &[Delimiter] {
@@ -135,7 +147,7 @@ impl CemeteryMap {
             return false;
         };
 
-        self.graves[index] = update(self.graves[index]);
+        self.graves[index] = update(self.graves[index].clone());
         true
     }
 

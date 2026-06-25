@@ -8,6 +8,7 @@ mod grave_rectangle;
 mod ids;
 mod person;
 mod person_directory;
+mod tags;
 
 pub use cemetery::Cemetery;
 pub use cemetery_map::CemeteryMap;
@@ -19,3 +20,4 @@ pub use grave_rectangle::GraveRectangle;
 pub use ids::{DelimiterId, GraveId, PersonId};
 pub use person::Person;
 pub use person_directory::PersonDirectory;
+pub use tags::Tags;

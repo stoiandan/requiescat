@@ -10,8 +10,10 @@ use iced::{Background, Border, Color, Element, Length, Point, Shadow, Theme, Vec
 
 use crate::localization::{Localizer, MessageId};
 use crate::models::{
-    Cemetery, DelimiterId, GraveGps, GraveId, GraveRectangle, Person, PersonDate, PersonId,
+    Cemetery, DelimiterId, GraveGps, GraveId, GraveRectangle, Person, PersonDate, PersonId, Tags,
 };
+use crate::screens::ConfirmationDialog;
+use crate::theme;
 
 #[derive(Default)]
 pub struct MapEditor {
@@ -23,9 +25,12 @@ pub struct MapEditor {
     canvas_cursor: Option<Point>,
     selected_person: Option<PersonId>,
     person_search: String,
+    grave_search: String,
     new_person: NewPersonDraft,
     person_edits: HashMap<PersonId, PersonEditDraft>,
-    grave_gps_edits: HashMap<GraveId, String>,
+    grave_gps_edits: HashMap<GraveId, GraveGpsEditDraft>,
+    grave_tag_inputs: HashMap<GraveId, String>,
+    pending_grave_tag_removal: Option<PendingGraveTagRemoval>,
     render_revision: u64,
 }
 
@@ -37,6 +42,7 @@ pub enum Message {
     NewPersonLastNameChanged(String),
     NewPersonDateOfBirthChanged(String),
     NewPersonDateOfDeceaseChanged(String),
+    NewPersonTagsChanged(String),
     CreateGrave(GraveRectangle),
     CreateDelimiter(GraveRectangle),
     ToolBarAction(ToolbarAction),
@@ -58,15 +64,23 @@ pub enum Message {
         amount: f32,
     },
     SelectGrave(Option<GraveId>),
-    UpdateGraveGps(GraveId, String),
+    UpdateGraveLatitude(GraveId, String),
+    UpdateGraveLongitude(GraveId, String),
+    GraveTagInputChanged(GraveId, String),
+    AddGraveTags(GraveId),
+    RequestRemoveGraveTag(GraveId, String),
+    CancelRemoveGraveTag,
+    ConfirmRemoveGraveTag(GraveId, String),
     SelectPerson(PersonId),
     PersonSearchChanged(String),
+    GraveSearchChanged(String),
     AssignPersonToSelectedGrave(PersonId),
     UnassignPersonFromGrave(PersonId),
     UpdatePersonFirstName(PersonId, String),
     UpdatePersonLastName(PersonId, String),
     UpdatePersonDateOfBirth(PersonId, String),
     UpdatePersonDateOfDecease(PersonId, String),
+    UpdatePersonTags(PersonId, String),
     CommitPendingChanges,
 }
 
@@ -116,6 +130,10 @@ impl MapEditor {
             }
             Message::NewPersonDateOfDeceaseChanged(value) => {
                 self.new_person.date_of_decease = value;
+                UpdateOutcome::Unchanged
+            }
+            Message::NewPersonTagsChanged(value) => {
+                self.new_person.tags = value;
                 UpdateOutcome::Unchanged
             }
             Message::CreateGrave(rectangle) => {
@@ -198,7 +216,25 @@ impl MapEditor {
                 }
                 UpdateOutcome::Unchanged
             }
-            Message::UpdateGraveGps(id, value) => self.update_grave_gps(id, value),
+            Message::UpdateGraveLatitude(id, value) => self.update_grave_latitude(id, value),
+            Message::UpdateGraveLongitude(id, value) => self.update_grave_longitude(id, value),
+            Message::GraveTagInputChanged(id, value) => {
+                self.grave_tag_inputs.insert(id, value);
+                UpdateOutcome::Unchanged
+            }
+            Message::AddGraveTags(id) => self.add_grave_tags(id),
+            Message::RequestRemoveGraveTag(id, tag) => {
+                if self.cemetery.grave(id).is_some() {
+                    self.pending_grave_tag_removal =
+                        Some(PendingGraveTagRemoval { grave_id: id, tag });
+                }
+                UpdateOutcome::Unchanged
+            }
+            Message::CancelRemoveGraveTag => {
+                self.pending_grave_tag_removal = None;
+                UpdateOutcome::Unchanged
+            }
+            Message::ConfirmRemoveGraveTag(id, tag) => self.remove_grave_tag(id, &tag),
             Message::SelectPerson(id) => {
                 self.selected_person = Some(id);
                 let previous_grave = self.selected_grave;
@@ -213,6 +249,11 @@ impl MapEditor {
             }
             Message::PersonSearchChanged(value) => {
                 self.person_search = value;
+                UpdateOutcome::Unchanged
+            }
+            Message::GraveSearchChanged(value) => {
+                self.grave_search = value;
+                self.invalidate_map();
                 UpdateOutcome::Unchanged
             }
             Message::AssignPersonToSelectedGrave(person_id) => {
@@ -253,6 +294,9 @@ impl MapEditor {
                 PersonEditDraft::with_date_of_decease,
                 Person::with_date_of_decease,
             ),
+            Message::UpdatePersonTags(id, value) => {
+                self.update_person_draft(id, value, PersonEditDraft::with_tags, Person::with_tags)
+            }
             Message::CommitPendingChanges => UpdateOutcome::Commit,
         }
     }
@@ -288,31 +332,42 @@ impl MapEditor {
             );
         }
 
-        container(column![map_row.height(Length::Fill), footer])
+        let content = container(column![map_row.height(Length::Fill), footer])
             .style(|_| container::Style {
                 border: iced::Border {
-                    color: iced::Color::WHITE,
+                    color: theme::TEXT_PRIMARY,
                     width: 2.0,
                     radius: 0.0.into(),
                 },
                 ..Default::default()
             })
-            .into()
+            .into();
+
+        if let Some(pending) = &self.pending_grave_tag_removal {
+            return ConfirmationDialog::new(
+                localizer.text(MessageId::ConfirmRemoveTagTitle),
+                localizer.value(
+                    MessageId::ConfirmRemoveTagDescription,
+                    "tag",
+                    pending.tag.as_str(),
+                ),
+                localizer.text(MessageId::Cancel),
+                localizer.text(MessageId::Delete),
+                Message::CancelRemoveGraveTag,
+                Message::ConfirmRemoveGraveTag(pending.grave_id, pending.tag.clone()),
+            )
+            .overlay(content);
+        }
+
+        content
     }
 
     pub fn person_directory_view<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, Message> {
-        container(scrollable(
-            column![self.person_directory(localizer)]
-                .spacing(16)
-                .padding(14),
-        ))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgb8(15, 45, 48))),
-            ..Default::default()
-        })
-        .into()
+        scrolling_surface(self.person_directory(localizer))
+    }
+
+    pub fn grave_directory_view<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, Message> {
+        scrolling_surface(self.grave_directory(localizer))
     }
 
     pub fn person_details_view<'a>(
@@ -331,14 +386,7 @@ impl MapEditor {
             column![text(localizer.text(MessageId::PersonNotFound)).size(20)].padding(16)
         };
 
-        container(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgb8(15, 45, 48))),
-                ..Default::default()
-            })
-            .into()
+        full_surface(content)
     }
 
     pub fn new_person_view<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, Message> {
@@ -357,11 +405,11 @@ impl MapEditor {
             submit
         };
 
-        container(
+        full_surface(
             column![
                 text(localizer.text(MessageId::NewPersonTitle)).size(20),
                 text(grave_label).size(12).style(|_| text::Style {
-                    color: Some(iced::Color::from_rgb8(190, 220, 218)),
+                    color: Some(theme::TEXT_MUTED),
                 }),
                 text_input(
                     &localizer.text(MessageId::FirstName),
@@ -387,18 +435,14 @@ impl MapEditor {
                 )
                 .on_input(Message::NewPersonDateOfDeceaseChanged)
                 .padding(8),
+                text_input(&localizer.text(MessageId::Tags), &self.new_person.tags)
+                    .on_input(Message::NewPersonTagsChanged)
+                    .padding(8),
                 submit
             ]
             .spacing(10)
             .padding(16),
         )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgb8(15, 45, 48))),
-            ..Default::default()
-        })
-        .into()
     }
 
     fn side_panel<'a>(
@@ -414,9 +458,10 @@ impl MapEditor {
         .width(Length::Fixed(340.0))
         .height(Length::Fill)
         .style(|_| container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgb8(15, 45, 48))),
+            background: Some(iced::Background::Color(theme::SURFACE)),
+            text_color: Some(theme::TEXT_PRIMARY),
             border: iced::Border {
-                color: iced::Color::from_rgb8(42, 139, 143),
+                color: theme::BORDER,
                 width: 1.0,
                 radius: 0.0.into(),
             },
@@ -436,17 +481,34 @@ impl MapEditor {
         .spacing(8);
 
         if let Some(grave) = self.cemetery.grave(grave_id) {
-            let gps = self
-                .grave_gps_edits
-                .get(&grave_id)
-                .cloned()
-                .unwrap_or_else(|| grave.gps_text());
+            let gps = GraveGpsEditDraft::for_grave(grave, self.grave_gps_edits.get(&grave_id));
 
-            content = content.push(
-                text_input(&localizer.text(MessageId::GraveGps), &gps)
-                    .on_input(move |value| Message::UpdateGraveGps(grave_id, value))
-                    .padding(8),
-            );
+            content = content
+                .push(section_heading(localizer.text(MessageId::GraveGps)))
+                .push(
+                    row![
+                        text(localizer.text(MessageId::Latitude))
+                            .width(Length::Fixed(82.0))
+                            .size(13),
+                        text_input(&localizer.text(MessageId::Latitude), &gps.latitude)
+                            .on_input(move |value| Message::UpdateGraveLatitude(grave_id, value))
+                            .padding(8)
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                )
+                .push(
+                    row![
+                        text(localizer.text(MessageId::Longitude))
+                            .width(Length::Fixed(82.0))
+                            .size(13),
+                        text_input(&localizer.text(MessageId::Longitude), &gps.longitude)
+                            .on_input(move |value| Message::UpdateGraveLongitude(grave_id, value))
+                            .padding(8)
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                );
         }
 
         let people = self.cemetery.people_in_grave(grave_id);
@@ -454,7 +516,7 @@ impl MapEditor {
         if people.is_empty() {
             content = content.push(text(localizer.text(MessageId::NoPersonsAssociated)).style(
                 |_| text::Style {
-                    color: Some(iced::Color::from_rgb8(190, 220, 218)),
+                    color: Some(theme::TEXT_MUTED),
                 },
             ));
         } else {
@@ -463,26 +525,106 @@ impl MapEditor {
             }
         }
 
-        container(content).into()
-    }
-
-    fn person_directory<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, Message> {
-        let mut content = column![
-            text(localizer.text(MessageId::Persons)).size(18),
-            text_input(
-                &localizer.text(MessageId::SearchPeople),
-                &self.person_search
-            )
-            .on_input(Message::PersonSearchChanged)
-            .padding(8)
-        ]
-        .spacing(8);
-
-        for person in self.cemetery.search_people(&self.person_search) {
-            content = content.push(self.person_result(localizer, person));
+        if let Some(grave) = self.cemetery.grave(grave_id) {
+            content = content.push(self.grave_tag_editor(localizer, grave_id, grave.tags()));
         }
 
         container(content).into()
+    }
+
+    fn grave_tag_editor<'a>(
+        &'a self,
+        localizer: &'a Localizer,
+        grave_id: GraveId,
+        tags: &'a Tags,
+    ) -> Element<'a, Message> {
+        let input = self
+            .grave_tag_inputs
+            .get(&grave_id)
+            .map(String::as_str)
+            .unwrap_or_default();
+        let add_button = button(text(localizer.text(MessageId::AddTag)));
+        let add_button = if input.trim().is_empty() {
+            add_button
+        } else {
+            add_button.on_press(Message::AddGraveTags(grave_id))
+        };
+
+        let mut content = column![
+            section_heading(localizer.text(MessageId::Tags)),
+            row![
+                text_input(&localizer.text(MessageId::Tags), input)
+                    .on_input(move |value| Message::GraveTagInputChanged(grave_id, value))
+                    .on_submit(Message::AddGraveTags(grave_id))
+                    .padding(8),
+                add_button.padding([8, 12])
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
+        ]
+        .spacing(8);
+
+        if !tags.is_empty() {
+            content = content.push(tag_badges(Some(grave_id), tags.values()));
+        }
+
+        container(content).padding(10).into()
+    }
+
+    fn person_directory<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, Message> {
+        directory(
+            localizer.text(MessageId::Persons),
+            localizer.text(MessageId::SearchPeople),
+            &self.person_search,
+            Message::PersonSearchChanged,
+            self.cemetery
+                .search_people(&self.person_search)
+                .into_iter()
+                .map(|person| self.person_result(localizer, person)),
+        )
+    }
+
+    fn grave_directory<'a>(&'a self, localizer: &'a Localizer) -> Element<'a, Message> {
+        directory(
+            localizer.text(MessageId::Graves),
+            localizer.text(MessageId::SearchGraves),
+            &self.grave_search,
+            Message::GraveSearchChanged,
+            self.cemetery
+                .search_graves(&self.grave_search)
+                .into_iter()
+                .map(|grave| self.grave_result(localizer, grave.id(), grave.tags())),
+        )
+    }
+
+    fn grave_result<'a>(
+        &'a self,
+        localizer: &'a Localizer,
+        grave_id: GraveId,
+        tags: &'a Tags,
+    ) -> Element<'a, Message> {
+        let mut details = column![
+            text(localizer.value(MessageId::Grave, "grave", grave_id.to_string())).size(16)
+        ]
+        .spacing(6);
+
+        if !tags.is_empty() {
+            details = details.push(tag_badges(None, tags.values()));
+        }
+
+        container(
+            row![
+                details.width(Length::Fill),
+                button(text(localizer.text(MessageId::GoToGrave)))
+                    .on_press(Message::SelectGrave(Some(grave_id)))
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding([10, 12])
+        .style(|_| card_style())
+        .into()
     }
 
     fn person_result<'a>(
@@ -500,7 +642,7 @@ impl MapEditor {
                     text(person.date_of_birth().to_owned())
                         .size(12)
                         .style(|_| text::Style {
-                            color: Some(iced::Color::from_rgb8(190, 220, 218)),
+                            color: Some(theme::TEXT_MUTED),
                         })
                 ]
                 .spacing(2),
@@ -534,15 +676,7 @@ impl MapEditor {
         container(content)
             .width(Length::Fill)
             .padding([10, 12])
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgb8(24, 64, 68))),
-                border: iced::Border {
-                    color: iced::Color::from_rgb8(42, 139, 143),
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                ..Default::default()
-            })
+            .style(|_| card_style())
             .into()
     }
 
@@ -565,13 +699,17 @@ impl MapEditor {
         let date_of_decease = edits
             .and_then(|edit| edit.date_of_decease.as_deref())
             .unwrap_or_else(|| person.date_of_decease_text());
+        let tags = edits
+            .and_then(|edit| edit.tags.as_deref())
+            .map(str::to_owned)
+            .unwrap_or_else(|| person.tags_text());
 
         let details = column![
             text(person.display_name()).size(16),
             text(localizer.value(MessageId::Born, "date", person.date_of_birth()))
                 .size(12)
                 .style(|_| text::Style {
-                    color: Some(iced::Color::from_rgb8(190, 220, 218)),
+                    color: Some(theme::TEXT_MUTED),
                 }),
         ]
         .spacing(2);
@@ -581,7 +719,7 @@ impl MapEditor {
                 text(localizer.value(MessageId::Grave, "grave", grave_id.to_string()))
                     .size(12)
                     .style(|_| text::Style {
-                        color: Some(iced::Color::from_rgb8(190, 220, 218)),
+                        color: Some(theme::TEXT_MUTED),
                     }),
             )
         } else {
@@ -602,20 +740,15 @@ impl MapEditor {
                     .padding(7),
                 text_input(&localizer.text(MessageId::DateOfDecease), date_of_decease)
                     .on_input(move |value| Message::UpdatePersonDateOfDecease(id, value))
+                    .padding(7),
+                text_input(&localizer.text(MessageId::Tags), &tags)
+                    .on_input(move |value| Message::UpdatePersonTags(id, value))
                     .padding(7)
             ]
             .spacing(6),
         )
         .padding(10)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgb8(24, 64, 68))),
-            border: iced::Border {
-                color: iced::Color::from_rgb8(42, 139, 143),
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            ..Default::default()
-        })
+        .style(|_| card_style())
         .into()
     }
 
@@ -654,14 +787,32 @@ impl MapEditor {
         }
     }
 
-    fn update_grave_gps(&mut self, id: GraveId, value: String) -> UpdateOutcome {
-        if self.cemetery.grave(id).is_none() {
+    fn update_grave_latitude(&mut self, id: GraveId, value: String) -> UpdateOutcome {
+        self.update_grave_gps(id, |draft| draft.latitude = value)
+    }
+
+    fn update_grave_longitude(&mut self, id: GraveId, value: String) -> UpdateOutcome {
+        self.update_grave_gps(id, |draft| draft.longitude = value)
+    }
+
+    fn update_grave_gps(
+        &mut self,
+        id: GraveId,
+        update: impl FnOnce(&mut GraveGpsEditDraft),
+    ) -> UpdateOutcome {
+        let Some(grave) = self.cemetery.grave(id) else {
             return UpdateOutcome::Unchanged;
-        }
+        };
 
-        self.grave_gps_edits.insert(id, value.clone());
+        let mut draft = GraveGpsEditDraft::for_grave(grave, self.grave_gps_edits.get(&id));
+        update(&mut draft);
+        self.update_grave_gps_draft(id, draft)
+    }
 
-        let Some(gps) = parse_optional_grave_gps(&value) else {
+    fn update_grave_gps_draft(&mut self, id: GraveId, draft: GraveGpsEditDraft) -> UpdateOutcome {
+        self.grave_gps_edits.insert(id, draft.clone());
+
+        let Some(gps) = draft.gps() else {
             return UpdateOutcome::Unchanged;
         };
 
@@ -671,6 +822,41 @@ impl MapEditor {
         UpdateOutcome::Changed
     }
 
+    fn add_grave_tags(&mut self, id: GraveId) -> UpdateOutcome {
+        let Some(grave) = self.cemetery.grave(id) else {
+            return UpdateOutcome::Unchanged;
+        };
+
+        let input = self.grave_tag_inputs.get(&id).cloned().unwrap_or_default();
+        let new_tags = Tags::parse(&input);
+        if new_tags.is_empty() {
+            return UpdateOutcome::Unchanged;
+        }
+
+        self.grave_tag_inputs.remove(&id);
+        self.update_grave_tags(id, grave.tags().merged(&new_tags))
+    }
+
+    fn remove_grave_tag(&mut self, id: GraveId, tag: &str) -> UpdateOutcome {
+        let Some(grave) = self.cemetery.grave(id) else {
+            self.pending_grave_tag_removal = None;
+            return UpdateOutcome::Unchanged;
+        };
+
+        let tags = grave.tags().without(tag);
+        self.pending_grave_tag_removal = None;
+        self.update_grave_tags(id, tags)
+    }
+
+    fn update_grave_tags(&mut self, id: GraveId, tags: Tags) -> UpdateOutcome {
+        if self.cemetery.update_grave_tags(id, tags) {
+            self.invalidate_map();
+            UpdateOutcome::Changed
+        } else {
+            UpdateOutcome::Unchanged
+        }
+    }
+
     pub(super) fn camera(&self) -> Camera {
         self.camera
     }
@@ -678,6 +864,25 @@ impl MapEditor {
     pub(super) fn selected_grave(&self) -> Option<GraveId> {
         self.selected_grave
             .filter(|id| self.cemetery.grave(*id).is_some())
+    }
+
+    pub(super) fn highlighted_graves(&self) -> Vec<GraveId> {
+        if self.grave_search.trim().is_empty() {
+            Vec::new()
+        } else {
+            self.cemetery
+                .search_graves(&self.grave_search)
+                .into_iter()
+                .map(|grave| grave.id())
+                .collect()
+        }
+    }
+
+    pub fn clear_grave_search(&mut self) {
+        if !self.grave_search.is_empty() {
+            self.grave_search.clear();
+            self.invalidate_map();
+        }
     }
 
     pub fn prepare_new_person(&mut self) {
@@ -702,6 +907,7 @@ impl MapEditor {
             details.date_of_birth,
             details.date_of_decease,
             self.new_person.grave_id,
+            details.tags,
         );
 
         self.selected_person = Some(id);
@@ -765,7 +971,7 @@ impl MapEditor {
     fn last_created_grave(&self) -> Option<crate::models::Grave> {
         self.last_created_grave
             .and_then(|id| self.cemetery.grave(id))
-            .copied()
+            .cloned()
     }
 
     pub(super) fn selected_tool(&self) -> Tool {
@@ -870,6 +1076,7 @@ struct NewPersonDraft {
     last_name: String,
     date_of_birth: String,
     date_of_decease: String,
+    tags: String,
     grave_id: Option<GraveId>,
 }
 
@@ -878,6 +1085,7 @@ struct NewPersonDetails {
     last_name: String,
     date_of_birth: PersonDate,
     date_of_decease: Option<PersonDate>,
+    tags: Tags,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -886,6 +1094,19 @@ struct PersonEditDraft {
     last_name: Option<String>,
     date_of_birth: Option<String>,
     date_of_decease: Option<String>,
+    tags: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct GraveGpsEditDraft {
+    latitude: String,
+    longitude: String,
+}
+
+#[derive(Debug, Clone)]
+struct PendingGraveTagRemoval {
+    grave_id: GraveId,
+    tag: String,
 }
 
 impl NewPersonDraft {
@@ -900,6 +1121,7 @@ impl NewPersonDraft {
             last_name,
             date_of_birth,
             date_of_decease,
+            tags: Tags::parse(&self.tags),
         })
     }
 }
@@ -948,6 +1170,40 @@ impl PersonEditDraft {
             parsed,
         )
     }
+
+    fn with_tags(self, value: String) -> (Self, Option<Tags>) {
+        let parsed = Tags::parse(&value);
+        (
+            Self {
+                tags: Some(value),
+                ..self
+            },
+            Some(parsed),
+        )
+    }
+}
+
+impl GraveGpsEditDraft {
+    fn for_grave(grave: &crate::models::Grave, draft: Option<&Self>) -> Self {
+        if let Some(draft) = draft {
+            return draft.clone();
+        }
+
+        grave.gps().map_or_else(Self::default, |gps| Self {
+            latitude: gps.latitude_text(),
+            longitude: gps.longitude_text(),
+        })
+    }
+
+    fn gps(&self) -> Option<Option<GraveGps>> {
+        if self.latitude.trim().is_empty() && self.longitude.trim().is_empty() {
+            Some(None)
+        } else {
+            GraveGps::parse_parts(&self.latitude, &self.longitude)
+                .ok()
+                .map(Some)
+        }
+    }
 }
 
 fn non_empty_trimmed(value: &str) -> Option<String> {
@@ -963,11 +1219,120 @@ fn parse_optional_person_date(value: &str) -> Option<Option<PersonDate>> {
     }
 }
 
-fn parse_optional_grave_gps(value: &str) -> Option<Option<GraveGps>> {
-    if value.trim().is_empty() {
-        Some(None)
+fn full_surface<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|_| surface_style())
+        .into()
+}
+
+fn scrolling_surface<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+    full_surface(scrollable(column![content].spacing(16).padding(14)))
+}
+
+fn surface_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(theme::SURFACE)),
+        text_color: Some(theme::TEXT_PRIMARY),
+        ..Default::default()
+    }
+}
+
+fn card_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(theme::SURFACE_RAISED)),
+        border: Border {
+            color: theme::BORDER,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..surface_style()
+    }
+}
+
+fn directory<'a>(
+    title: String,
+    placeholder: String,
+    search: &'a str,
+    on_search: impl Fn(String) -> Message + 'a,
+    results: impl IntoIterator<Item = Element<'a, Message>>,
+) -> Element<'a, Message> {
+    container(
+        column![
+            text(title).size(18),
+            text_input(&placeholder, search)
+                .on_input(on_search)
+                .padding(8)
+        ]
+        .spacing(8)
+        .extend(results),
+    )
+    .into()
+}
+
+fn section_heading<'a>(value: String) -> iced::widget::Text<'a> {
+    text(value).size(14).style(|_| text::Style {
+        color: Some(theme::TEXT_MUTED),
+    })
+}
+
+fn tag_badges<'a>(grave_id: Option<GraveId>, tags: &'a [String]) -> Element<'a, Message> {
+    row(tags.iter().map(|tag| tag_badge(grave_id, tag)))
+        .spacing(6)
+        .wrap()
+        .vertical_spacing(6)
+        .into()
+}
+
+fn tag_badge<'a>(grave_id: Option<GraveId>, tag: &'a str) -> Element<'a, Message> {
+    let content: Element<'a, Message> = if let Some(grave_id) = grave_id {
+        row![
+            text(tag).size(12),
+            button(text("x").size(11))
+                .padding([0, 4])
+                .style(tag_remove_button)
+                .on_press(Message::RequestRemoveGraveTag(grave_id, tag.to_owned()))
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Start)
+        .into()
     } else {
-        GraveGps::parse(value).ok().map(Some)
+        text(tag).size(12).into()
+    };
+
+    container(content)
+        .padding([5, if grave_id.is_some() { 6 } else { 8 }])
+        .style(|_| tag_badge_style())
+        .into()
+}
+
+fn tag_badge_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(theme::ACCENT_REST)),
+        text_color: Some(theme::TEXT_PRIMARY),
+        border: Border {
+            color: theme::BORDER_STRONG,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn tag_remove_button(_: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(Background::Color(match status {
+            button::Status::Hovered => theme::DANGER,
+            button::Status::Pressed => theme::DANGER_PRESSED,
+            button::Status::Disabled | button::Status::Active => Color::TRANSPARENT,
+        })),
+        text_color: Color::WHITE,
+        border: Border {
+            radius: 8.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
     }
 }
 
@@ -977,20 +1342,20 @@ fn danger_button(_: &Theme, status: button::Status) -> button::Style {
 
     button::Style {
         background: Some(Background::Color(if pressed {
-            Color::from_rgb8(122, 25, 36)
+            theme::DANGER_PRESSED
         } else if hovered {
-            Color::from_rgb8(178, 45, 58)
+            theme::DANGER_HOVER
         } else {
-            Color::from_rgb8(151, 34, 47)
+            theme::DANGER
         })),
         text_color: Color::WHITE,
         border: Border {
-            color: Color::from_rgb8(225, 91, 105),
+            color: theme::DANGER_BORDER,
             width: 1.0,
             radius: 4.0.into(),
         },
         shadow: Shadow {
-            color: Color::from_rgba8(0, 0, 0, 0.35),
+            color: theme::SHADOW,
             offset: if pressed {
                 Vector::new(0.0, 1.0)
             } else {
@@ -1021,15 +1386,27 @@ mod tests {
             PersonDate::parse("10-12-1815").unwrap(),
             None,
             grave_id,
+            Tags::default(),
         )
+    }
+
+    fn create_grave(editor: &mut MapEditor, x: f32, y: f32) -> GraveId {
+        editor
+            .cemetery
+            .add_grave_with_color(rectangle_at(x, y), GraveColor::default())
+    }
+
+    fn grave_tags(editor: &MapEditor, grave_id: GraveId) -> Option<String> {
+        editor
+            .cemetery
+            .grave(grave_id)
+            .map(|grave| grave.tags_text())
     }
 
     #[test]
     fn assign_person_to_selected_grave_requires_a_selected_grave() {
         let mut editor = MapEditor::default();
-        let grave_id = editor
-            .cemetery
-            .add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        let grave_id = create_grave(&mut editor, 0.0, 0.0);
         let person_id = create_person(&mut editor, None);
 
         editor.update(Message::AssignPersonToSelectedGrave(person_id));
@@ -1051,9 +1428,7 @@ mod tests {
     #[test]
     fn unassign_person_from_grave_clears_their_grave() {
         let mut editor = MapEditor::default();
-        let grave_id = editor
-            .cemetery
-            .add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        let grave_id = create_grave(&mut editor, 0.0, 0.0);
         let person_id = create_person(&mut editor, Some(grave_id));
 
         editor.update(Message::UnassignPersonFromGrave(person_id));
@@ -1067,9 +1442,7 @@ mod tests {
     #[test]
     fn select_person_goes_to_their_grave() {
         let mut editor = MapEditor::default();
-        let grave_id = editor
-            .cemetery
-            .add_grave_with_color(rectangle_at(100.0, 200.0), GraveColor::default());
+        let grave_id = create_grave(&mut editor, 100.0, 200.0);
         let person_id = create_person(&mut editor, Some(grave_id));
 
         editor.update(Message::SelectPerson(person_id));
@@ -1144,10 +1517,7 @@ mod tests {
     fn danger_button_uses_red_background() {
         let style = danger_button(&Theme::Dark, button::Status::Active);
 
-        assert_eq!(
-            style.background,
-            Some(Background::Color(Color::from_rgb8(151, 34, 47)))
-        );
+        assert_eq!(style.background, Some(Background::Color(theme::DANGER)));
         assert_eq!(style.text_color, Color::WHITE);
     }
 
@@ -1233,16 +1603,17 @@ mod tests {
     #[test]
     fn grave_gps_edit_preserves_intermediate_text_until_valid() {
         let mut editor = MapEditor::default();
-        let grave_id = editor
-            .cemetery
-            .add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
+        let grave_id = create_grave(&mut editor, 0.0, 0.0);
 
         assert_eq!(
-            editor.update(Message::UpdateGraveGps(grave_id, "51° 30′".to_owned())),
+            editor.update(Message::UpdateGraveLatitude(grave_id, "51° 30′".to_owned())),
             UpdateOutcome::Unchanged
         );
         assert_eq!(
-            editor.grave_gps_edits.get(&grave_id).map(String::as_str),
+            editor
+                .grave_gps_edits
+                .get(&grave_id)
+                .map(|draft| draft.latitude.as_str()),
             Some("51° 30′")
         );
         assert_eq!(
@@ -1254,9 +1625,16 @@ mod tests {
         );
 
         assert_eq!(
-            editor.update(Message::UpdateGraveGps(
+            editor.update(Message::UpdateGraveLatitude(
                 grave_id,
-                "51° 30′ 26.64″ N, 0° 7′ 40.08″ W".to_owned()
+                "51° 30′ 26.64″ N".to_owned()
+            )),
+            UpdateOutcome::Unchanged
+        );
+        assert_eq!(
+            editor.update(Message::UpdateGraveLongitude(
+                grave_id,
+                "0° 7′ 40.08″ W".to_owned()
             )),
             UpdateOutcome::Changed
         );
@@ -1275,16 +1653,22 @@ mod tests {
     #[test]
     fn empty_grave_gps_clears_saved_coordinates() {
         let mut editor = MapEditor::default();
-        let grave_id = editor
-            .cemetery
-            .add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
-        editor.update(Message::UpdateGraveGps(
+        let grave_id = create_grave(&mut editor, 0.0, 0.0);
+        editor.update(Message::UpdateGraveLatitude(
             grave_id,
-            "51° 30′ 26.64″ N, 0° 7′ 40.08″ W".to_owned(),
+            "51° 30′ 26.64″ N".to_owned(),
+        ));
+        editor.update(Message::UpdateGraveLongitude(
+            grave_id,
+            "0° 7′ 40.08″ W".to_owned(),
         ));
 
         assert_eq!(
-            editor.update(Message::UpdateGraveGps(grave_id, " ".to_owned())),
+            editor.update(Message::UpdateGraveLatitude(grave_id, " ".to_owned())),
+            UpdateOutcome::Unchanged
+        );
+        assert_eq!(
+            editor.update(Message::UpdateGraveLongitude(grave_id, " ".to_owned())),
             UpdateOutcome::Changed
         );
 
@@ -1295,6 +1679,90 @@ mod tests {
                 .and_then(|grave| grave.gps()),
             None
         );
+    }
+
+    #[test]
+    fn grave_tags_are_added_from_input_and_removed_after_confirmation() {
+        let mut editor = MapEditor::default();
+        let grave_id = create_grave(&mut editor, 0.0, 0.0);
+        editor.update(Message::GraveTagInputChanged(
+            grave_id,
+            "family plot, veteran".to_owned(),
+        ));
+
+        assert_eq!(
+            editor.update(Message::AddGraveTags(grave_id)),
+            UpdateOutcome::Changed
+        );
+        assert!(!editor.grave_tag_inputs.contains_key(&grave_id));
+        assert_eq!(
+            grave_tags(&editor, grave_id),
+            Some("family plot, veteran".to_owned())
+        );
+        assert_eq!(
+            editor.update(Message::RequestRemoveGraveTag(
+                grave_id,
+                "family plot".to_owned()
+            )),
+            UpdateOutcome::Unchanged
+        );
+        assert!(editor.pending_grave_tag_removal.is_some());
+        assert_eq!(
+            grave_tags(&editor, grave_id),
+            Some("family plot, veteran".to_owned())
+        );
+
+        assert_eq!(
+            editor.update(Message::ConfirmRemoveGraveTag(
+                grave_id,
+                "family plot".to_owned()
+            )),
+            UpdateOutcome::Changed
+        );
+        assert!(editor.pending_grave_tag_removal.is_none());
+        assert_eq!(grave_tags(&editor, grave_id), Some("veteran".to_owned()));
+    }
+
+    #[test]
+    fn grave_search_highlights_matching_graves_without_selecting_them() {
+        let mut editor = MapEditor::default();
+        let matching = create_grave(&mut editor, 0.0, 0.0);
+        let other = create_grave(&mut editor, 100.0, 0.0);
+        editor
+            .cemetery
+            .update_grave_tags(matching, Tags::parse("family plot, veteran"));
+        editor
+            .cemetery
+            .update_grave_tags(other, Tags::parse("unmarked"));
+
+        assert_eq!(
+            editor.update(Message::GraveSearchChanged("veteran".to_owned())),
+            UpdateOutcome::Unchanged
+        );
+
+        assert_eq!(editor.highlighted_graves(), vec![matching]);
+        assert_eq!(editor.selected_grave(), None);
+
+        editor.clear_grave_search();
+
+        assert!(editor.highlighted_graves().is_empty());
+    }
+
+    #[test]
+    fn person_tag_edits_are_searchable() {
+        let mut editor = MapEditor::default();
+        let grave_id = create_grave(&mut editor, 0.0, 0.0);
+        let person_id = create_person(&mut editor, Some(grave_id));
+
+        assert_eq!(
+            editor.update(Message::UpdatePersonTags(
+                person_id,
+                "first programmer, countess".to_owned()
+            )),
+            UpdateOutcome::Changed
+        );
+
+        assert_eq!(editor.cemetery.search_people("first programmer").len(), 1);
     }
 
     #[test]

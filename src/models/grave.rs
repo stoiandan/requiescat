@@ -1,14 +1,15 @@
 use iced::{Point, Vector};
 
-use super::{GraveGps, GraveId, GraveRectangle};
+use super::{GraveGps, GraveId, GraveRectangle, Tags};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Grave {
     id: GraveId,
     rectangle: GraveRectangle,
     color: GraveColor,
     rotation_degrees: f32,
     gps: Option<GraveGps>,
+    tags: Tags,
 }
 
 impl Grave {
@@ -19,6 +20,7 @@ impl Grave {
             color,
             rotation_degrees: 0.0,
             gps: None,
+            tags: Tags::default(),
         }
     }
 
@@ -28,6 +30,7 @@ impl Grave {
         color: GraveColor,
         rotation_degrees: f32,
         gps: Option<GraveGps>,
+        tags: Tags,
     ) -> Self {
         Self {
             id,
@@ -35,6 +38,7 @@ impl Grave {
             color,
             rotation_degrees,
             gps,
+            tags,
         }
     }
 
@@ -64,6 +68,24 @@ impl Grave {
 
     pub fn with_gps(self, gps: Option<GraveGps>) -> Self {
         Self { gps, ..self }
+    }
+
+    pub fn tags(&self) -> &Tags {
+        &self.tags
+    }
+
+    pub fn tags_text(&self) -> String {
+        self.tags.as_text()
+    }
+
+    pub fn with_tags(self, tags: Tags) -> Self {
+        Self { tags, ..self }
+    }
+
+    pub fn matches_tag_query(&self, query: &str) -> bool {
+        let query = query.trim();
+
+        query.is_empty() || self.tags.matches_query(query)
     }
 
     pub fn with_rotation(self, rotation_degrees: f32) -> Self {
