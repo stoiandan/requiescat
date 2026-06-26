@@ -36,8 +36,9 @@ of trying to replace files inside the sandbox.
 
 ## Signing secrets
 
-Signing is optional for development builds. Configure these GitHub Actions
-secrets for trusted production packages:
+Signing is optional for development builds. Tagged releases require these
+GitHub Actions secrets for the macOS package, because unsigned downloaded
+`.app` bundles can be rejected by Gatekeeper as damaged or incomplete:
 
 - `WINDOWS_CERTIFICATE`: Base64-encoded Authenticode PFX certificate.
 - `WINDOWS_CERTIFICATE_PASSWORD`: PFX password.
@@ -48,8 +49,9 @@ secrets for trusted production packages:
 - `APPLE_APP_PASSWORD`: App-specific Apple password.
 - `APPLE_TEAM_ID`: Apple developer team identifier.
 
-When the macOS signing and Apple credentials are present, the workflow signs,
-notarizes, and staples the app before publishing it.
+When the macOS signing and Apple credentials are present, the workflow signs the
+nested executables and app bundle, notarizes, staples, and assesses the app
+before publishing it.
 
 ## Database migrations
 
