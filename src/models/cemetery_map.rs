@@ -1,9 +1,6 @@
 use iced::Vector;
 
-use super::{
-    Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveGps, GraveId, GraveRectangle,
-    Tags,
-};
+use super::{Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveId, GraveRectangle};
 
 #[derive(Debug, Clone, Default)]
 pub struct CemeteryMap {
@@ -40,7 +37,7 @@ impl CemeteryMap {
         color: GraveColor,
     ) -> GraveId {
         let id = self.next_id();
-        self.graves.push(Grave::with_color(id, rectangle, color));
+        self.graves.push(Grave::new(id, rectangle, color));
         id
     }
 
@@ -77,28 +74,12 @@ impl CemeteryMap {
         }
     }
 
-    pub fn move_grave(&mut self, id: GraveId, delta: Vector) {
-        self.update_grave(id, |grave| grave.translated(delta));
-    }
-
     pub fn move_delimiter(&mut self, id: DelimiterId, delta: Vector) {
         self.update_delimiter(id, |delimiter| delimiter.translated(delta));
     }
 
-    pub fn rotate_grave(&mut self, id: GraveId, rotation_degrees: f32) -> bool {
-        self.update_grave(id, |grave| grave.with_rotation(rotation_degrees))
-    }
-
     pub fn rotate_delimiter(&mut self, id: DelimiterId, rotation_degrees: f32) -> bool {
         self.update_delimiter(id, |delimiter| delimiter.with_rotation(rotation_degrees))
-    }
-
-    pub fn update_grave_gps(&mut self, id: GraveId, gps: Option<GraveGps>) -> bool {
-        self.update_grave(id, |grave| grave.with_gps(gps))
-    }
-
-    pub fn update_grave_tags(&mut self, id: GraveId, tags: Tags) -> bool {
-        self.update_grave(id, |grave| grave.with_tags(tags))
     }
 
     pub fn grave_at(&self, point: iced::Point) -> Option<GraveId> {
@@ -142,7 +123,7 @@ impl CemeteryMap {
             .find(|delimiter| delimiter.id() == id)
     }
 
-    fn update_grave(&mut self, id: GraveId, update: impl FnOnce(Grave) -> Grave) -> bool {
+    pub fn update_grave(&mut self, id: GraveId, update: impl FnOnce(Grave) -> Grave) -> bool {
         let Some(index) = self.index_of(id) else {
             return false;
         };
@@ -269,7 +250,7 @@ mod tests {
         let moved = map.add_grave_with_color(rectangle_at(0.0, 0.0), GraveColor::default());
         let stationary = map.add_grave_with_color(rectangle_at(20.0, 0.0), GraveColor::default());
 
-        map.move_grave(moved, Vector::new(5.0, -3.0));
+        map.update_grave(moved, |grave| grave.translated(Vector::new(5.0, -3.0)));
 
         assert_eq!(
             map.grave(moved).map(|grave| grave.rectangle().top_left()),
@@ -320,7 +301,7 @@ mod tests {
             DelimiterType::Road,
         );
 
-        assert!(map.rotate_grave(grave, 450.0));
+        assert!(map.update_grave(grave, |grave| grave.with_rotation(450.0)));
         assert!(map.rotate_delimiter(delimiter, -90.0));
 
         assert_eq!(

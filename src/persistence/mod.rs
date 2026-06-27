@@ -13,11 +13,6 @@ use crate::models::{
 const APPLICATION_ID: &str = "requiescat";
 const CURRENT_SCHEMA_VERSION: u32 = 4;
 
-pub trait CemeteryRepository {
-    fn load(&self) -> Result<Cemetery, PersistenceError>;
-    fn save(&self, cemetery: &Cemetery) -> Result<(), PersistenceError>;
-}
-
 #[derive(Debug)]
 pub enum PersistenceError {
     Io(std::io::Error),
@@ -174,10 +169,8 @@ impl SqliteCemeteryRepository {
         migrate_schema(&connection)?;
         Ok(connection)
     }
-}
 
-impl CemeteryRepository for SqliteCemeteryRepository {
-    fn load(&self) -> Result<Cemetery, PersistenceError> {
+    pub fn load(&self) -> Result<Cemetery, PersistenceError> {
         let connection = Connection::open(&self.path)?;
         configure_connection(&connection)?;
         if table_exists(&connection, "requiescat_metadata")? {
@@ -192,7 +185,7 @@ impl CemeteryRepository for SqliteCemeteryRepository {
         ))
     }
 
-    fn save(&self, cemetery: &Cemetery) -> Result<(), PersistenceError> {
+    pub fn save(&self, cemetery: &Cemetery) -> Result<(), PersistenceError> {
         let mut connection = self.writable_connection()?;
         validate_current_schema(&connection)?;
         let transaction = connection.transaction()?;
@@ -1240,9 +1233,11 @@ mod tests {
             grave_color,
         );
         let grave_gps = GraveGps::parse("51° 30′ 26.64″ N, 0° 7′ 40.08″ W").unwrap();
-        cemetery.update_grave_gps(grave_id, Some(grave_gps));
-        cemetery.update_grave_tags(grave_id, Tags::parse("family plot, row three"));
-        cemetery.rotate_grave(grave_id, 45.0);
+        cemetery.update_grave(grave_id, |grave| grave.with_gps(Some(grave_gps)));
+        cemetery.update_grave(grave_id, |grave| {
+            grave.with_tags(Tags::parse("family plot, row three"))
+        });
+        cemetery.update_grave(grave_id, |grave| grave.with_rotation(45.0));
         let delimiter_id = cemetery.add_delimiter_with_color_and_type(
             GraveRectangle::from_top_left_size(Point::new(2.0, 4.0), Size::new(200.0, 20.0)),
             GraveColor::from_rgb8(71, 141, 86),

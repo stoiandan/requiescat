@@ -55,15 +55,13 @@ Examples of details to keep private:
 
 Leaking details is not only about visibility modifiers. A public function that requires callers to pass implementation-specific values can leak just as much as a public struct field.
 
-## Repository Pattern In This Project
+## Repository Boundary In This Project
 
 Persistence should follow the repository shape already present in the codebase:
 
 ```rust
-pub trait CemeteryRepository {
-    fn load(&self) -> Result<Cemetery, PersistenceError>;
-    fn save(&mut self, cemetery: &Cemetery) -> Result<(), PersistenceError>;
-}
+repository.load()
+repository.save(cemetery)
 ```
 
 The app layer can choose a repository and call `load` or `save`. The repository handles the rest:
@@ -94,7 +92,6 @@ For persistence, that means:
 
 ```text
 App / UI
-  -> CemeteryRepository
   -> SqliteCemeteryRepository
   -> rusqlite::Connection
   -> .sqlite file

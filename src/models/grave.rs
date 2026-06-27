@@ -13,7 +13,11 @@ pub struct Grave {
 }
 
 impl Grave {
-    pub fn with_color(id: GraveId, rectangle: GraveRectangle, color: GraveColor) -> Self {
+    pub fn with_color(self, color: GraveColor) -> Self {
+        Self { color, ..self }
+    }
+
+    pub fn new(id: GraveId, rectangle: GraveRectangle, color: GraveColor) -> Self {
         Self {
             id,
             rectangle,

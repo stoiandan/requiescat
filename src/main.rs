@@ -11,7 +11,7 @@ use requiescat::export::pdf::{PdfExportOptions, export_cemetery_map};
 use requiescat::localization::{Language, Localizer, MessageId};
 use requiescat::models::{Cemetery, PersonId};
 use requiescat::persistence::{
-    CemeteryFile, CemeteryLibrary, CemeteryRepository, PersistenceError, SqliteCemeteryRepository,
+    CemeteryFile, CemeteryLibrary, PersistenceError, SqliteCemeteryRepository,
 };
 use requiescat::screens::{
     MapEditor, MapEditorMessage, MapEditorUpdateOutcome, StartMenuMessage, StartMenuViewState,

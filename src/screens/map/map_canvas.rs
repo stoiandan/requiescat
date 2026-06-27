@@ -142,6 +142,7 @@ impl canvas::Program<Message> for LocalizedMapCanvas<'_> {
                     state,
                     &self.editor.camera(),
                     self.editor.selected_delimiter_type(),
+                    self.editor.selected_grave_color().to_iced(),
                 ),
                 _ => {}
             }

@@ -1,48 +1,54 @@
 use iced::widget::canvas;
-use iced::{Point, Rectangle};
+use iced::{Point, Rectangle, Vector};
 
 use super::Camera;
 use super::map_canvas::CanvasState;
-use crate::models::{Cemetery, DelimiterType, GraveRectangle};
+use crate::models::{Cemetery, Delimiter, DelimiterType};
+
+const MIN_SCREEN_LENGTH: f32 = 10.0;
+const WALL_AMPLITUDE: f32 = 10.0;
+const WALL_STEP: f32 = 20.0;
+const ROAD_HALF_WIDTH: f32 = 8.0;
+const VISIBILITY_PADDING: f32 = WALL_AMPLITUDE.max(ROAD_HALF_WIDTH);
 
 pub fn preview(
     frame: &mut canvas::Frame,
     state: &CanvasState,
     camera: &Camera,
     delimiter_type: DelimiterType,
+    color: iced::Color,
 ) {
     let Some(current_drag) = state.current_drag_position() else {
         return;
     };
 
     let start = state.left_pressed_at().unwrap_or(current_drag);
-    let rectangle = GraveRectangle::from_corners(start, current_drag);
 
-    draw_shape(
+    draw_world_delimiter(
         frame,
-        rectangle,
-        0.0,
+        start,
+        current_drag,
         camera,
-        iced::Color::WHITE,
+        color,
         delimiter_type,
         true,
     );
 }
 
 pub fn all(frame: &mut canvas::Frame, cemetery: &Cemetery, camera: &Camera, bounds: Rectangle) {
-    for delimiter in cemetery.delimiters().iter().filter(|delimiter| {
-        rectangle_is_visible(
-            delimiter.rectangle(),
-            delimiter.rotation_degrees(),
-            camera,
-            bounds,
-        )
-    }) {
-        draw_shape(
+    for delimiter in cemetery.delimiters() {
+        let (start, end) = delimiter_line_points(delimiter);
+        let Some(line) = ScreenLine::from_world(start, end, camera) else {
+            continue;
+        };
+
+        if !line.is_visible(bounds) {
+            continue;
+        }
+
+        draw_delimiter(
             frame,
-            delimiter.rectangle(),
-            delimiter.rotation_degrees(),
-            camera,
+            line,
             delimiter.color().to_iced(),
             delimiter.delimiter_type(),
             false,
@@ -50,63 +56,56 @@ pub fn all(frame: &mut canvas::Frame, cemetery: &Cemetery, camera: &Camera, boun
     }
 }
 
-fn draw_shape(
+fn draw_world_delimiter(
     frame: &mut canvas::Frame,
-    rectangle: GraveRectangle,
-    rotation_degrees: f32,
+    start: iced::Point,
+    current_drag: iced::Point,
     camera: &Camera,
     color: iced::Color,
     delimiter_type: DelimiterType,
     preview: bool,
 ) {
+    let Some(line) = ScreenLine::from_world(start, current_drag, camera) else {
+        return;
+    };
+
+    draw_delimiter(frame, line, color, delimiter_type, preview)
+}
+
+fn draw_delimiter(
+    frame: &mut canvas::Frame,
+    line: ScreenLine,
+    color: iced::Color,
+    delimiter_type: DelimiterType,
+    preview: bool,
+) {
     match delimiter_type {
-        DelimiterType::Wall => {
-            draw_wall(frame, rectangle, rotation_degrees, camera, color, preview)
-        }
-        DelimiterType::Road => {
-            draw_road(frame, rectangle, rotation_degrees, camera, color, preview)
-        }
+        DelimiterType::Wall => draw_wall(frame, line, color, preview),
+        DelimiterType::Road => draw_road(frame, line, color, preview),
     }
 }
 
-fn draw_wall(
-    frame: &mut canvas::Frame,
-    rectangle: GraveRectangle,
-    rotation_degrees: f32,
-    camera: &Camera,
-    color: iced::Color,
-    preview: bool,
-) {
-    let screen = ScreenRectangle::from_map(rectangle, rotation_degrees, camera);
-    if screen.min_dimension() < 10.0 {
-        return;
-    }
-
+fn draw_wall(frame: &mut canvas::Frame, line: ScreenLine, color: iced::Color, preview: bool) {
     frame.stroke(
-        &wall_zig_zag(screen),
+        &wall_zig_zag(line),
         canvas::Stroke::default()
             .with_color(color)
             .with_width(if preview { 1.5 } else { 2.0 }),
     );
 }
 
-fn draw_road(
-    frame: &mut canvas::Frame,
-    rectangle: GraveRectangle,
-    rotation_degrees: f32,
-    camera: &Camera,
-    color: iced::Color,
-    preview: bool,
-) {
-    let screen = ScreenRectangle::from_map(rectangle, rotation_degrees, camera);
+fn draw_road(frame: &mut canvas::Frame, line: ScreenLine, color: iced::Color, preview: bool) {
     let dash = canvas::LineDash {
         segments: &[10.0, 6.0],
         offset: 0,
     };
 
-    for quarter in [1, 4] {
+    for offset in [
+        -line.normal * ROAD_HALF_WIDTH,
+        line.normal * ROAD_HALF_WIDTH,
+    ] {
         frame.stroke(
-            &screen.quarter_line(quarter),
+            &canvas::Path::line(line.start + offset, line.end + offset),
             canvas::Stroke {
                 width: if preview { 1.5 } else { 2.0 },
                 style: canvas::Style::Solid(color),
@@ -117,92 +116,77 @@ fn draw_road(
     }
 }
 
-fn wall_zig_zag(screen: ScreenRectangle) -> canvas::Path {
-    let x_center = screen.width / 2.0;
-    let amplitude = (screen.width / 5.0).clamp(3.0, 10.0);
-    let step = 20.0;
-    let mut y = 0.0;
-    let mut zig = true;
+fn wall_zig_zag(line: ScreenLine) -> canvas::Path {
+    let amplitude = WALL_AMPLITUDE.min(line.length / 3.0);
 
     canvas::Path::new(|builder| {
-        builder.move_to(screen.point(x_center, 0.0));
-        while y < screen.height {
-            y = (y + step).min(screen.height);
-            builder.line_to(screen.point(
-                if zig {
-                    x_center - amplitude
-                } else {
-                    x_center + amplitude
-                },
-                y,
-            ));
+        builder.move_to(line.start);
+
+        let mut distance = 0.0;
+        let mut zig = true;
+        while distance < line.length {
+            distance = (distance + WALL_STEP).min(line.length);
+            let center = line.point_at(distance);
+            let offset = line.normal * if zig { -amplitude } else { amplitude };
+            builder.line_to(center + offset);
             zig = !zig;
         }
     })
 }
 
-fn rectangle_is_visible(
-    rectangle: GraveRectangle,
-    rotation_degrees: f32,
-    camera: &Camera,
-    bounds: Rectangle,
-) -> bool {
-    let corners = rectangle
-        .corners_rotated(rotation_degrees)
-        .map(|corner| camera.world_to_screen(corner));
-    let min_x = corners
-        .iter()
-        .map(|corner| corner.x)
-        .fold(f32::INFINITY, f32::min);
-    let max_x = corners
-        .iter()
-        .map(|corner| corner.x)
-        .fold(f32::NEG_INFINITY, f32::max);
-    let min_y = corners
-        .iter()
-        .map(|corner| corner.y)
-        .fold(f32::INFINITY, f32::min);
-    let max_y = corners
-        .iter()
-        .map(|corner| corner.y)
-        .fold(f32::NEG_INFINITY, f32::max);
+fn delimiter_line_points(delimiter: &Delimiter) -> (Point, Point) {
+    let rectangle = delimiter.rectangle();
+    let rotation_degrees = delimiter.rotation_degrees();
+    let width = rectangle.size().width;
 
-    max_x >= 0.0 && max_y >= 0.0 && min_x <= bounds.width && min_y <= bounds.height
+    (
+        rectangle.point_at_rotated(width / 2.0, 0.0, rotation_degrees),
+        rectangle.point_at_rotated(width / 2.0, rectangle.size().height, rotation_degrees),
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ScreenRectangle {
-    rectangle: GraveRectangle,
-    rotation_degrees: f32,
-    width: f32,
-    height: f32,
-    camera: Camera,
+struct ScreenLine {
+    start: Point,
+    end: Point,
+    length: f32,
+    normal: Vector,
 }
 
-impl ScreenRectangle {
-    fn from_map(rectangle: GraveRectangle, rotation_degrees: f32, camera: &Camera) -> Self {
-        Self {
-            rectangle,
-            rotation_degrees,
-            width: rectangle.size().width,
-            height: rectangle.size().height,
-            camera: *camera,
+impl ScreenLine {
+    fn from_world(start: Point, end: Point, camera: &Camera) -> Option<Self> {
+        Self::new(camera.world_to_screen(start), camera.world_to_screen(end))
+    }
+
+    fn new(start: Point, end: Point) -> Option<Self> {
+        let delta = end - start;
+        let length = (delta.x.powi(2) + delta.y.powi(2)).sqrt();
+        if length < MIN_SCREEN_LENGTH {
+            return None;
         }
+
+        Some(Self {
+            start,
+            end,
+            length,
+            normal: Vector::new(-delta.y / length, delta.x / length),
+        })
     }
 
-    fn min_dimension(self) -> f32 {
-        (self.width * self.camera.zoom).min(self.height * self.camera.zoom)
+    fn point_at(self, distance: f32) -> Point {
+        let progress = distance / self.length;
+        Point::new(
+            self.start.x + (self.end.x - self.start.x) * progress,
+            self.start.y + (self.end.y - self.start.y) * progress,
+        )
     }
 
-    fn quarter_line(self, quarter: u32) -> canvas::Path {
-        let quarter = quarter.clamp(1, 4);
-        let x = self.width / quarter as f32;
+    fn is_visible(self, bounds: Rectangle) -> bool {
+        let min_x = self.start.x.min(self.end.x) - VISIBILITY_PADDING;
+        let max_x = self.start.x.max(self.end.x) + VISIBILITY_PADDING;
+        let min_y = self.start.y.min(self.end.y) - VISIBILITY_PADDING;
+        let max_y = self.start.y.max(self.end.y) + VISIBILITY_PADDING;
 
-        canvas::Path::line(self.point(x, 0.0), self.point(x, self.height))
-    }
-
-    fn point(self, x: f32, y: f32) -> Point {
-        self.camera
-            .world_to_screen(self.rectangle.point_at_rotated(x, y, self.rotation_degrees))
+        max_x >= 0.0 && max_y >= 0.0 && min_x <= bounds.width && min_y <= bounds.height
     }
 }

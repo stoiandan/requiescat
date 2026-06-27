@@ -163,6 +163,11 @@ impl MapEditor {
                 {
                     self.invalidate_map();
                 }
+                if let ToolbarAction::SelectGraveColor(color) = action
+                    && let Some(id) = self.selected_grave()
+                {
+                    return self.update_grave(id, |grave| grave.with_color(color));
+                }
                 UpdateOutcome::Unchanged
             }
             Message::CanvasCursorChanged(cursor) => {
@@ -816,10 +821,12 @@ impl MapEditor {
             return UpdateOutcome::Unchanged;
         };
 
-        self.cemetery.update_grave_gps(id, gps);
-        self.grave_gps_edits.remove(&id);
-        self.invalidate_map();
-        UpdateOutcome::Changed
+        if self.update_grave(id, |grave| grave.with_gps(gps)) == UpdateOutcome::Changed {
+            self.grave_gps_edits.remove(&id);
+            UpdateOutcome::Changed
+        } else {
+            UpdateOutcome::Unchanged
+        }
     }
 
     fn add_grave_tags(&mut self, id: GraveId) -> UpdateOutcome {
@@ -833,8 +840,9 @@ impl MapEditor {
             return UpdateOutcome::Unchanged;
         }
 
+        let tags = grave.tags().merged(&new_tags);
         self.grave_tag_inputs.remove(&id);
-        self.update_grave_tags(id, grave.tags().merged(&new_tags))
+        self.update_grave(id, |grave| grave.with_tags(tags))
     }
 
     fn remove_grave_tag(&mut self, id: GraveId, tag: &str) -> UpdateOutcome {
@@ -845,11 +853,15 @@ impl MapEditor {
 
         let tags = grave.tags().without(tag);
         self.pending_grave_tag_removal = None;
-        self.update_grave_tags(id, tags)
+        self.update_grave(id, |grave| grave.with_tags(tags))
     }
 
-    fn update_grave_tags(&mut self, id: GraveId, tags: Tags) -> UpdateOutcome {
-        if self.cemetery.update_grave_tags(id, tags) {
+    fn update_grave(
+        &mut self,
+        id: GraveId,
+        update: impl FnOnce(crate::models::Grave) -> crate::models::Grave,
+    ) -> UpdateOutcome {
+        if self.cemetery.update_grave(id, update) {
             self.invalidate_map();
             UpdateOutcome::Changed
         } else {
@@ -931,14 +943,19 @@ impl MapEditor {
 
     fn move_map_object(&mut self, id: MapObjectId, delta: Vector) {
         match id {
-            MapObjectId::Grave(id) => self.cemetery.move_grave(id, delta),
+            MapObjectId::Grave(id) => {
+                self.cemetery
+                    .update_grave(id, |grave| grave.translated(delta));
+            }
             MapObjectId::Delimiter(id) => self.cemetery.move_delimiter(id, delta),
         }
     }
 
     fn rotate_map_object(&mut self, id: MapObjectId, rotation_degrees: f32) -> bool {
         match id {
-            MapObjectId::Grave(id) => self.cemetery.rotate_grave(id, rotation_degrees),
+            MapObjectId::Grave(id) => self
+                .cemetery
+                .update_grave(id, |grave| grave.with_rotation(rotation_degrees)),
             MapObjectId::Delimiter(id) => self.cemetery.rotate_delimiter(id, rotation_degrees),
         }
     }
@@ -955,8 +972,9 @@ impl MapEditor {
         let id = self
             .cemetery
             .add_grave_with_color(rectangle, last_created_grave.color());
-        self.cemetery
-            .rotate_grave(id, last_created_grave.rotation_degrees());
+        self.cemetery.update_grave(id, |grave| {
+            grave.with_rotation(last_created_grave.rotation_degrees())
+        });
         self.selected_grave = Some(id);
         self.remember_created_grave(id);
         self.invalidate_map();
@@ -984,6 +1002,10 @@ impl MapEditor {
 
     pub(super) fn selected_delimiter_type(&self) -> crate::models::DelimiterType {
         self.toolbar.selected_delimiter_type()
+    }
+
+    pub(super) fn selected_grave_color(&self) -> crate::models::GraveColor {
+        self.toolbar.selected_grave_color()
     }
 
     pub(super) fn render_revision(&self) -> u64 {
@@ -1728,12 +1750,12 @@ mod tests {
         let mut editor = MapEditor::default();
         let matching = create_grave(&mut editor, 0.0, 0.0);
         let other = create_grave(&mut editor, 100.0, 0.0);
+        editor.cemetery.update_grave(matching, |grave| {
+            grave.with_tags(Tags::parse("family plot, veteran"))
+        });
         editor
             .cemetery
-            .update_grave_tags(matching, Tags::parse("family plot, veteran"));
-        editor
-            .cemetery
-            .update_grave_tags(other, Tags::parse("unmarked"));
+            .update_grave(other, |grave| grave.with_tags(Tags::parse("unmarked")));
 
         assert_eq!(
             editor.update(Message::GraveSearchChanged("veteran".to_owned())),

@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use iced::Vector;
 
 use super::{
-    CemeteryMap, Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveGps, GraveId,
-    GraveRectangle, Person, PersonDate, PersonDirectory, PersonId, Tags,
+    CemeteryMap, Delimiter, DelimiterId, DelimiterType, Grave, GraveColor, GraveId, GraveRectangle,
+    Person, PersonDate, PersonDirectory, PersonId, Tags,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -53,28 +53,16 @@ impl Cemetery {
         self.map.erase_delimiter(id);
     }
 
-    pub fn move_grave(&mut self, id: GraveId, delta: Vector) {
-        self.map.move_grave(id, delta);
-    }
-
     pub fn move_delimiter(&mut self, id: DelimiterId, delta: Vector) {
         self.map.move_delimiter(id, delta);
-    }
-
-    pub fn rotate_grave(&mut self, id: GraveId, rotation_degrees: f32) -> bool {
-        self.map.rotate_grave(id, rotation_degrees)
     }
 
     pub fn rotate_delimiter(&mut self, id: DelimiterId, rotation_degrees: f32) -> bool {
         self.map.rotate_delimiter(id, rotation_degrees)
     }
 
-    pub fn update_grave_gps(&mut self, id: GraveId, gps: Option<GraveGps>) -> bool {
-        self.map.update_grave_gps(id, gps)
-    }
-
-    pub fn update_grave_tags(&mut self, id: GraveId, tags: Tags) -> bool {
-        self.map.update_grave_tags(id, tags)
+    pub fn update_grave(&mut self, id: GraveId, update: impl FnOnce(Grave) -> Grave) -> bool {
+        self.map.update_grave(id, update)
     }
 
     pub fn grave_at(&self, point: iced::Point) -> Option<GraveId> {
