@@ -632,12 +632,13 @@ impl Requiescat {
         }
     }
 
-    fn with_global_menu<'a>(
-        &'a self,
-        content: Element<'a, Message>,
-        is_main_window: bool,
-    ) -> Element<'a, Message> {
-        let language_menu = row![
+
+    fn build_language_menu(&self, is_main_window: bool) -> Element<'_, Message> {
+        if !is_main_window {
+            return row![].into();
+        }
+
+         row![
             text(self.localizer.text(MessageId::LanguageMenu)).size(12),
             pick_list(
                 Language::ALL,
@@ -648,7 +649,16 @@ impl Requiescat {
             .padding([5, 8]),
         ]
         .spacing(8)
-        .align_y(iced::Alignment::Center);
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    fn with_global_menu<'a>(
+        &'a self,
+        content: Element<'a, Message>,
+        is_main_window: bool,
+    ) -> Element<'a, Message> {
+        let language_menu = self.build_language_menu(is_main_window);
 
         let mut menu_bar = row![].spacing(6).align_y(iced::Alignment::Center);
         let show_app_menu = is_main_window && self.main_screen == MainScreen::MapEditor;
