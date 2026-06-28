@@ -72,6 +72,16 @@ enum AppMenu {
     View,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowKind {
+    Main,
+    PersonDirectory,
+    GraveDirectory,
+    NewPerson,
+    PersonDetails(PersonId),
+    Unknown,
+}
+
 #[derive(Debug, Clone, Default)]
 struct OpenWindows {
     main: Option<window::Id>,
@@ -91,6 +101,22 @@ impl OpenWindows {
 
     fn is_main(&self, id: window::Id) -> bool {
         self.main == Some(id)
+    }
+
+    fn kind(&self, id: window::Id) -> WindowKind {
+        [
+            (self.main, WindowKind::Main),
+            (self.person_directory, WindowKind::PersonDirectory),
+            (self.grave_directory, WindowKind::GraveDirectory),
+            (self.new_person, WindowKind::NewPerson),
+        ]
+        .into_iter()
+        .find_map(|(window, kind)| (window == Some(id)).then_some(kind))
+        .or_else(|| {
+            self.person_detail_for_window(id)
+                .map(WindowKind::PersonDetails)
+        })
+        .unwrap_or(WindowKind::Unknown)
     }
 
     fn with_person_details(&self, id: window::Id, person_id: PersonId) -> Self {
@@ -556,89 +582,99 @@ impl Requiescat {
     }
 
     fn view(&self, window: window::Id) -> Element<'_, Message> {
-        let content = if Some(window) == self.windows.person_directory {
-            self.editor
+        let kind = self.windows.kind(window);
+        let content = match kind {
+            WindowKind::Main => self.main_window_view(),
+            WindowKind::PersonDirectory => self
+                .editor
                 .person_directory_view(&self.localizer)
-                .map(Message::Editor)
-        } else if Some(window) == self.windows.grave_directory {
-            self.editor
+                .map(Message::Editor),
+            WindowKind::GraveDirectory => self
+                .editor
                 .grave_directory_view(&self.localizer)
-                .map(Message::Editor)
-        } else if Some(window) == self.windows.new_person {
-            self.editor
+                .map(Message::Editor),
+            WindowKind::NewPerson => self
+                .editor
                 .new_person_view(&self.localizer)
-                .map(Message::Editor)
-        } else if let Some(person_id) = self.windows.person_detail_for_window(window) {
-            self.editor
+                .map(Message::Editor),
+            WindowKind::PersonDetails(person_id) => self
+                .editor
                 .person_details_view(&self.localizer, person_id)
-                .map(Message::Editor)
-        } else if self.windows.is_main(window) {
-            let status = self
-                .status
-                .as_ref()
-                .map(|status| status.localized(&self.localizer));
-            let pending_delete = self.pending_delete_cemetery.as_deref().and_then(|path| {
-                self.cemeteries
-                    .iter()
-                    .find(|cemetery| cemetery.path() == path)
-            });
-
-            match self.main_screen {
-                MainScreen::StartMenu => start_menu_view(
-                    &self.localizer,
-                    StartMenuViewState {
-                        cemeteries: &self.cemeteries,
-                        selected: self.selected_cemetery.as_deref(),
-                        show_cemeteries: self.show_cemeteries,
-                        show_create_cemetery: self.show_create_cemetery,
-                        new_cemetery_name: &self.new_cemetery_name,
-                        pending_delete,
-                        status,
-                    },
-                )
-                .map(Message::StartMenu),
-                MainScreen::MapEditor => self
-                    .editor
-                    .view(
-                        &self.localizer,
-                        self.session.save_state.label(&self.localizer),
-                    )
-                    .map(Message::Editor),
-            }
-        } else {
-            container(text(self.localizer.text(MessageId::UnknownWindow)))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center(Length::Fill)
-                .into()
+                .map(Message::Editor),
+            WindowKind::Unknown => self.unknown_window_view(),
         };
 
-        self.with_global_menu(content, self.windows.is_main(window))
+        self.with_global_menu(content, kind == WindowKind::Main)
     }
 
     fn title(&self, window: window::Id) -> String {
-        if Some(window) == self.windows.person_directory {
-            self.localizer.text(MessageId::PersonDirectoryTitle)
-        } else if Some(window) == self.windows.grave_directory {
-            self.localizer.text(MessageId::GraveDirectoryTitle)
-        } else if Some(window) == self.windows.new_person {
-            self.localizer.text(MessageId::NewPersonTitle)
-        } else if self.windows.person_detail_for_window(window).is_some() {
-            self.localizer.text(MessageId::PersonDetailsTitle)
-        } else if self.main_screen == MainScreen::MapEditor {
-            self.session.window_title()
-        } else {
-            self.localizer.text(MessageId::CemeteryLibraryTitle)
+        match self.windows.kind(window) {
+            WindowKind::PersonDirectory => self.localizer.text(MessageId::PersonDirectoryTitle),
+            WindowKind::GraveDirectory => self.localizer.text(MessageId::GraveDirectoryTitle),
+            WindowKind::NewPerson => self.localizer.text(MessageId::NewPersonTitle),
+            WindowKind::PersonDetails(_) => self.localizer.text(MessageId::PersonDetailsTitle),
+            WindowKind::Main if self.main_screen == MainScreen::MapEditor => {
+                self.session.window_title()
+            }
+            WindowKind::Main | WindowKind::Unknown => {
+                self.localizer.text(MessageId::CemeteryLibraryTitle)
+            }
         }
     }
 
+    fn main_window_view(&self) -> Element<'_, Message> {
+        match self.main_screen {
+            MainScreen::StartMenu => self.start_menu_view(),
+            MainScreen::MapEditor => self
+                .editor
+                .view(
+                    &self.localizer,
+                    self.session.save_state.label(&self.localizer),
+                )
+                .map(Message::Editor),
+        }
+    }
+
+    fn start_menu_view(&self) -> Element<'_, Message> {
+        let status = self
+            .status
+            .as_ref()
+            .map(|status| status.localized(&self.localizer));
+        let pending_delete = self.pending_delete_cemetery.as_deref().and_then(|path| {
+            self.cemeteries
+                .iter()
+                .find(|cemetery| cemetery.path() == path)
+        });
+
+        start_menu_view(
+            &self.localizer,
+            StartMenuViewState {
+                cemeteries: &self.cemeteries,
+                selected: self.selected_cemetery.as_deref(),
+                show_cemeteries: self.show_cemeteries,
+                show_create_cemetery: self.show_create_cemetery,
+                new_cemetery_name: &self.new_cemetery_name,
+                pending_delete,
+                status,
+            },
+        )
+        .map(Message::StartMenu)
+    }
+
+    fn unknown_window_view(&self) -> Element<'_, Message> {
+        container(text(self.localizer.text(MessageId::UnknownWindow)))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center(Length::Fill)
+            .into()
+    }
 
     fn build_language_menu(&self, is_main_window: bool) -> Element<'_, Message> {
         if !is_main_window {
             return row![].into();
         }
 
-         row![
+        row![
             text(self.localizer.text(MessageId::LanguageMenu)).size(12),
             pick_list(
                 Language::ALL,
