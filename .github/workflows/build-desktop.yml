@@ -115,13 +115,6 @@ jobs:
   macos:
     name: macOS Apple Silicon app
     runs-on: macos-latest
-    env:
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     permissions:
       contents: read
       id-token: write
@@ -140,23 +133,6 @@ jobs:
         run: |
           APP_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
           echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
-
-      - name: Require macOS signing for releases
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          for secret in \
-            MACOS_CERTIFICATE \
-            MACOS_CERTIFICATE_PASSWORD \
-            MACOS_SIGNING_IDENTITY \
-            APPLE_ID \
-            APPLE_APP_PASSWORD \
-            APPLE_TEAM_ID
-          do
-            if [ -z "${!secret}" ]; then
-              echo "$secret is required for a downloadable macOS release." >&2
-              exit 1
-            fi
-          done
 
       - name: Build Apple Silicon executables
         run: cargo build --locked --release --target aarch64-apple-darwin
@@ -188,72 +164,22 @@ jobs:
           file "$APP/Contents/MacOS/requiescat"
           file "$APP/Contents/MacOS/requiescat-updater"
 
-      - name: Sign macOS app
-        if: env.MACOS_CERTIFICATE != ''
+      - name: Ad-hoc sign macOS app
         run: |
-          CERTIFICATE="$RUNNER_TEMP/requiescat-signing.p12"
-          KEYCHAIN="$RUNNER_TEMP/requiescat-signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
-
-          echo "$MACOS_CERTIFICATE" | base64 --decode > "$CERTIFICATE"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$CERTIFICATE" \
-            -k "$KEYCHAIN" \
-            -P "$MACOS_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign
-          security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -s \
-            -k "$KEYCHAIN_PASSWORD" \
-            "$KEYCHAIN"
-
           for executable in \
             dist/Requiescat.app/Contents/MacOS/requiescat \
             dist/Requiescat.app/Contents/MacOS/requiescat-updater
           do
-            codesign --force --verify --verbose \
-              --options runtime \
-              --timestamp \
-              --keychain "$KEYCHAIN" \
-              --sign "$MACOS_SIGNING_IDENTITY" \
+            codesign --force --verbose \
+              --sign - \
               "$executable"
           done
 
-          codesign --force --verify --verbose \
-            --options runtime \
-            --timestamp \
-            --keychain "$KEYCHAIN" \
-            --sign "$MACOS_SIGNING_IDENTITY" \
+          codesign --force --verbose \
+            --sign - \
             dist/Requiescat.app
-          codesign --verify --deep --strict --verbose=2 dist/Requiescat.app
 
-      - name: Ad-hoc sign macOS development app
-        if: env.MACOS_CERTIFICATE == ''
-        run: |
-          for executable in \
-            dist/Requiescat.app/Contents/MacOS/requiescat \
-            dist/Requiescat.app/Contents/MacOS/requiescat-updater
-          do
-            codesign --force --sign - "$executable"
-          done
-          codesign --force --sign - dist/Requiescat.app
           codesign --verify --deep --strict --verbose=2 dist/Requiescat.app
-
-      - name: Notarize macOS app
-        if: env.MACOS_CERTIFICATE != '' && env.APPLE_ID != ''
-        run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            dist/Requiescat.app "$RUNNER_TEMP/requiescat-notarization.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/requiescat-notarization.zip" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-          xcrun stapler staple dist/Requiescat.app
-          xcrun stapler validate dist/Requiescat.app
-          spctl --assess --type execute --verbose=4 dist/Requiescat.app
 
       - name: Package macOS app
         run: |
