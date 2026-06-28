@@ -166,20 +166,13 @@ jobs:
 
       - name: Ad-hoc sign macOS app
         run: |
-          for executable in \
-            dist/Requiescat.app/Contents/MacOS/requiescat \
-            dist/Requiescat.app/Contents/MacOS/requiescat-updater
-          do
             codesign --force --verbose \
-              --sign - \
-              "$executable"
-          done
+            --sign - dist/Requiescat.app/Contents/MacOS/requiescat-updater
 
-          codesign --force --verbose \
-            --sign - \
-            dist/Requiescat.app
+            codesign --force --verbose \
+            --sign - dist/Requiescat.app
 
-          codesign --verify --deep --strict --verbose=2 dist/Requiescat.app
+            codesign --verify --deep --strict --verbose=2 dist/Requiescat.app
 
       - name: Package macOS app
         run: |
