@@ -6,3 +6,4 @@ pub mod persistence;
 pub mod screens;
 pub mod theme;
 pub mod updater;
+pub mod windowing;

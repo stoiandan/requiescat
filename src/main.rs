@@ -18,6 +18,7 @@ use requiescat::screens::{
     start_menu_view,
 };
 use requiescat::theme;
+use requiescat::windowing;
 
 fn main() -> iced::Result {
     if std::env::args_os().any(|argument| argument == "--version") {
@@ -218,7 +219,7 @@ impl CemeterySession {
 
     fn window_title(&self) -> String {
         self.active_cemetery_name()
-            .map(|name| format!("{name} - Requiescat"))
+            .map(|name| format!("Requiescat - {name}"))
             .unwrap_or_else(|| "Requiescat".to_owned())
     }
 
@@ -408,6 +409,7 @@ impl Requiescat {
         };
 
         let (window_id, open) = window::open(window::Settings {
+            icon: windowing::application_icon(),
             size: Size::new(760.0, 520.0),
             min_size: Some(Size::new(620.0, 420.0)),
             ..Default::default()
@@ -850,6 +852,7 @@ impl Requiescat {
         }
 
         let (id, open) = window::open(window::Settings {
+            icon: windowing::application_icon(),
             size: Size::new(460.0, 700.0),
             min_size: Some(Size::new(360.0, 420.0)),
             ..Default::default()
@@ -866,6 +869,7 @@ impl Requiescat {
         }
 
         let (id, open) = window::open(window::Settings {
+            icon: windowing::application_icon(),
             size: Size::new(460.0, 700.0),
             min_size: Some(Size::new(360.0, 420.0)),
             ..Default::default()
@@ -882,6 +886,7 @@ impl Requiescat {
         }
 
         let (id, open) = window::open(window::Settings {
+            icon: windowing::application_icon(),
             size: Size::new(430.0, 430.0),
             min_size: Some(Size::new(360.0, 360.0)),
             ..Default::default()
@@ -900,6 +905,7 @@ impl Requiescat {
         self.editor.prepare_new_person();
 
         let (id, open) = window::open(window::Settings {
+            icon: windowing::application_icon(),
             size: Size::new(420.0, 420.0),
             min_size: Some(Size::new(360.0, 360.0)),
             ..Default::default()

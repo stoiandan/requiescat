@@ -49,6 +49,17 @@ GitHub Actions secrets for the macOS package, because unsigned downloaded
 - `APPLE_APP_PASSWORD`: App-specific Apple password.
 - `APPLE_TEAM_ID`: Apple developer team identifier.
 
+For Windows, the `WINDOWS_CERTIFICATE` secret must contain a real
+CA-issued Authenticode code-signing certificate exported as a PFX.
+Self-signed certificates are only useful for local testing on machines that
+explicitly trust that certificate, and they will not remove the
+"Unknown publisher" or SmartScreen reputation warnings for normal users.
+If you want public Windows installs to avoid those warnings, use either:
+
+- a standard Authenticode certificate from a trusted certificate authority and
+  build reputation over time, or
+- an EV code-signing certificate / a managed service like Azure Trusted Signing.
+
 When the macOS signing and Apple credentials are present, the workflow signs the
 nested executables and app bundle, notarizes, staples, and assesses the app
 before publishing it.

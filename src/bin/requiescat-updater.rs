@@ -2,8 +2,11 @@
 
 use iced::stream;
 use iced::widget::{button, column, container, progress_bar, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Size, Subscription, Task};
+use iced::{
+    Alignment, Background, Border, Color, Element, Length, Size, Subscription, Task, window,
+};
 use requiescat::updater::{self, LauncherProgress};
+use requiescat::windowing;
 
 fn main() -> iced::Result {
     iced::application(
@@ -13,8 +16,12 @@ fn main() -> iced::Result {
     )
     .title(UpdaterWindow::title)
     .subscription(UpdaterWindow::subscription)
-    .window_size(Size::new(360.0, 150.0))
-    .resizable(false)
+    .window(window::Settings {
+        icon: windowing::application_icon(),
+        size: Size::new(360.0, 150.0),
+        resizable: false,
+        ..Default::default()
+    })
     .centered()
     .run()
 }
